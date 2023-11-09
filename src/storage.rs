@@ -7,7 +7,7 @@ pub struct StorageEngine {
     file: File,
     // Tmp hack
     read_file: File,
-    pub wal_buffer: Vec<Mutation>,
+    wal_buffer: Vec<Mutation>,
     remaining_space_for_wal: usize,
     unused_page_size: usize,
     num_pages: usize,
@@ -37,6 +37,10 @@ impl StorageEngine {
         // Get the remaining space for the wal
         let remaining_space_for_wal = PAGE_SIZE - last_page_size;
 
+        println!(
+            "File size: {}, last page size: {}, num pages: {}, remaining space for wal: {}",
+            file_size, last_page_size, num_pages, remaining_space_for_wal
+        );
         Self {
             file: file.into(),
             read_file: read_file.into(),
@@ -62,6 +66,7 @@ impl StorageEngine {
                 self.flush_wal().await.unwrap();
             }
         }
+        // println!("WAL buffer: {:?}", self.wal_buffer);
         Ok(())
     }
 
@@ -109,7 +114,7 @@ impl StorageEngine {
                 .unwrap();
             self.read_file.read_exact(&mut buf).await.unwrap();
 
-            if let Some(value) = get_value_from_buffer(buf.into_iter()).unwrap() {
+            if let Some(value) = get_value_from_buffer(buf.into_iter(), &cmd.0).unwrap() {
                 return Ok(Some(value.into()));
             }
         }
@@ -123,7 +128,7 @@ impl StorageEngine {
                 .unwrap();
             self.read_file.read_exact(&mut buf).await.unwrap();
 
-            if let Some(value) = get_value_from_buffer(buf.into_iter()).unwrap() {
+            if let Some(value) = get_value_from_buffer(buf.into_iter(), &cmd.0).unwrap() {
                 return Ok(Some(value.into()));
             }
         }

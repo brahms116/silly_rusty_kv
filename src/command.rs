@@ -89,16 +89,20 @@ where
     }
 }
 
-pub fn get_value_from_buffer<T: Iterator<Item = u8>>(bytes: T) -> Result<Option<String>, ()> {
+pub fn get_value_from_buffer<T: Iterator<Item = u8>>(bytes: T, key: &str) -> Result<Option<String>, ()> {
     let mut rest = bytes;
     let mut value: Option<String> = None;
     while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
         match mutation {
             Mutation::Put(PutCommand(k, v)) => {
-                value = Some(v);
+                if k == key {
+                    value = Some(v);
+                }
             }
             Mutation::Delete(DeleteCommand(k)) => {
-                value = None;
+                if k == key {
+                    value = None;
+                }
             }
         }
         rest = new_rest;
