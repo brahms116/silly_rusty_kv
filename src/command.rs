@@ -41,8 +41,15 @@ where
 {
     type Error = ();
 
-    fn from_bytes(bytes: T) -> Result<(Self, T), Self::Error> {
-        todo!()
+    fn from_bytes(mut bytes: T) -> Result<(Self, T), Self::Error> {
+        let key_len = bytes.next().ok_or(())?;
+        let value_len_bytes: Vec<u8> = bytes.by_ref().take(2).collect();
+        let value_len = u16::from_le_bytes([value_len_bytes[0], value_len_bytes[1]]);
+        let key_bytes: Vec<u8> = bytes.by_ref().take(key_len as usize).collect();
+        let value_bytes: Vec<u8> = bytes.by_ref().take(value_len as usize).collect();
+        let key = String::from_utf8(key_bytes).map_err(|_| ())?;
+        let value = String::from_utf8(value_bytes).map_err(|_| ())?;
+        Ok((PutCommand(key, value), bytes))
     }
 }
 
@@ -52,8 +59,11 @@ where
 {
     type Error = ();
 
-    fn from_bytes(bytes: T) -> Result<(Self, T), ()> {
-        todo!()
+    fn from_bytes(mut bytes: T) -> Result<(Self, T), ()> {
+        let key_len = bytes.next().ok_or(())?;
+        let key_bytes: Vec<u8> = bytes.by_ref().take(key_len as usize).collect();
+        let key = String::from_utf8(key_bytes).map_err(|_| ())?;
+        Ok((DeleteCommand(key), bytes))
     }
 }
 
@@ -79,7 +89,7 @@ where
     }
 }
 
-pub fn get_value_from_buffer<T: Iterator<Item= u8>>(bytes: T) -> Result<Option<String>, ()> {
+pub fn get_value_from_buffer<T: Iterator<Item = u8>>(bytes: T) -> Result<Option<String>, ()> {
     let mut rest = bytes;
     let mut value: Option<String> = None;
     while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
@@ -95,7 +105,6 @@ pub fn get_value_from_buffer<T: Iterator<Item= u8>>(bytes: T) -> Result<Option<S
     }
     Ok(value)
 }
-
 
 pub fn get_value_from_mutations_ref<'a, T: Iterator<Item = &'a Mutation>>(
     muts: T,
@@ -218,6 +227,7 @@ pub enum Command {
     Put(PutCommand),
     Delete(DeleteCommand),
     Get(GetCommand),
+    Exit,
 }
 
 impl FromStr for Command {
@@ -241,6 +251,7 @@ impl FromStr for Command {
                 let key = iter.next().ok_or("No key")?;
                 Ok(Command::Get(GetCommand(key.to_string())))
             }
+            "EXIT" => Ok(Command::Exit),
             _ => Err("Unknown command".to_string()),
         }
     }

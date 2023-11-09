@@ -7,7 +7,7 @@ pub struct StorageEngine {
     file: File,
     // Tmp hack
     read_file: File,
-    wal_buffer: Vec<Mutation>,
+    pub wal_buffer: Vec<Mutation>,
     remaining_space_for_wal: usize,
     unused_page_size: usize,
     num_pages: usize,
@@ -57,7 +57,10 @@ impl StorageEngine {
                 } else {
                     println!("Key not found");
                 }
-            },
+            }
+            Command::Exit => {
+                self.flush_wal().await.unwrap();
+            }
         }
         Ok(())
     }
@@ -74,6 +77,11 @@ impl StorageEngine {
     pub async fn get_from_wal(&mut self, cmd: &GetCommand) -> Result<Option<&str>, ()> {
         let wal_len = self.wal_buffer.len();
         for i in 0..wal_len {
+            if let Mutation::Delete(delete_cmd) = &self.wal_buffer[wal_len - i - 1] {
+                if delete_cmd.0 == cmd.0 {
+                    return Ok(None);
+                }
+            }
             if let Mutation::Put(put_cmd) = &self.wal_buffer[wal_len - i - 1] {
                 if put_cmd.0 == cmd.0 {
                     return Ok(Some(&put_cmd.1));
