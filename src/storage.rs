@@ -1,7 +1,7 @@
 use crate::command::*;
 use crate::consts::*;
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub struct StorageEngine {
     file: File,
@@ -9,6 +9,8 @@ pub struct StorageEngine {
     read_file: File,
     wal_buffer: Vec<Mutation>,
     remaining_space_for_wal: usize,
+    unused_page_size: usize,
+    num_pages: usize,
 }
 
 impl StorageEngine {
@@ -30,6 +32,8 @@ impl StorageEngine {
         // Get the size of the last page
         let last_page_size = file_size % PAGE_SIZE;
 
+        let num_pages = file_size / PAGE_SIZE;
+
         // Get the remaining space for the wal
         let remaining_space_for_wal = PAGE_SIZE - last_page_size;
 
@@ -38,11 +42,24 @@ impl StorageEngine {
             read_file: read_file.into(),
             wal_buffer: Vec::new(),
             remaining_space_for_wal,
+            num_pages,
+            unused_page_size: last_page_size,
         }
     }
 
     pub async fn handle_cmd(&mut self, cmd: Command, out_stream: ()) -> Result<(), ()> {
-        todo!()
+        match cmd {
+            Command::Put(cmd) => self.put(cmd).await.unwrap(),
+            Command::Delete(cmd) => self.delete(cmd).await.unwrap(),
+            Command::Get(cmd) => {
+                if let Some(value) = self.get(&cmd).await.unwrap() {
+                    println!("{}", value);
+                } else {
+                    println!("Key not found");
+                }
+            },
+        }
+        Ok(())
     }
 
     pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
@@ -74,10 +91,34 @@ impl StorageEngine {
                 return Ok(Some(value.into()));
             }
         }
-        // read the whole file into memory
-        let mut buf = Vec::new();
-        self.read_file.read_to_end(&mut buf).await.unwrap();
 
+        let current_page_pointer = self.num_pages * PAGE_SIZE;
+        if self.unused_page_size > 0 {
+            let mut buf = vec![0; self.unused_page_size];
+            self.read_file
+                .seek(std::io::SeekFrom::Start(current_page_pointer as u64))
+                .await
+                .unwrap();
+            self.read_file.read_exact(&mut buf).await.unwrap();
+
+            if let Some(value) = get_value_from_buffer(buf.into_iter()).unwrap() {
+                return Ok(Some(value.into()));
+            }
+        }
+
+        // Check the previous pages
+        for i in 0..self.num_pages {
+            let mut buf = vec![0; PAGE_SIZE];
+            self.read_file
+                .seek(std::io::SeekFrom::Start((self.num_pages - 1 - i) as u64))
+                .await
+                .unwrap();
+            self.read_file.read_exact(&mut buf).await.unwrap();
+
+            if let Some(value) = get_value_from_buffer(buf.into_iter()).unwrap() {
+                return Ok(Some(value.into()));
+            }
+        }
         Ok(None)
     }
 
@@ -91,6 +132,7 @@ impl StorageEngine {
     }
 
     pub async fn flush_wal(&mut self) -> Result<(), ()> {
+        println!("Flushing wal");
         // Try to not reallocate?
         self.file
             .write_all(
@@ -105,6 +147,8 @@ impl StorageEngine {
             .unwrap();
 
         self.remaining_space_for_wal = PAGE_SIZE;
+        self.unused_page_size = 0;
+        self.num_pages += 1;
         Ok(())
     }
 

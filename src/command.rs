@@ -8,9 +8,12 @@ pub trait IntoBytes {
     fn into_bytes(self) -> Vec<u8>;
 }
 
-pub trait FromBytes: Sized {
+pub trait ParseFromBytes<T>: Sized
+where
+    T: Iterator<Item = u8>,
+{
     type Error;
-    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Self::Error>;
+    fn from_bytes(bytes: T) -> Result<(Self, T), Self::Error>;
 }
 
 impl IntoBytes for PutCommand {
@@ -20,7 +23,7 @@ impl IntoBytes for PutCommand {
         let value_bytes = self.1.into_bytes();
         let key_len = key_bytes.len() as u8;
         let value_len = value_bytes.len() as u16;
-        let header: u8 = 1;
+        let header: u8 = 2;
         let value_len_slice = value_len.to_le_bytes();
 
         bytes.push(header);
@@ -32,37 +35,120 @@ impl IntoBytes for PutCommand {
     }
 }
 
-impl FromBytes for PutCommand {
+impl<T> ParseFromBytes<T> for PutCommand
+where
+    T: Iterator<Item = u8>,
+{
     type Error = ();
 
-    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Self::Error> {
-        let header = bytes[0];
-        if header != 1 {
-            return Err(());
-        }
-        let key_len = bytes[1];
-        let value_len = u16::from_le_bytes([bytes[2], bytes[3]]);
-        let key = String::from_utf8(bytes[4..4 + key_len as usize].to_vec()).unwrap();
-        let value = String::from_utf8(
-            bytes[4 + key_len as usize..4 + key_len as usize + value_len as usize].to_vec(),
-        )
-        .unwrap();
-        Ok(PutCommand(key, value))
+    fn from_bytes(bytes: T) -> Result<(Self, T), Self::Error> {
+        todo!()
     }
 }
 
-impl FromBytes for DeleteCommand {
+impl<T> ParseFromBytes<T> for DeleteCommand
+where
+    T: Iterator<Item = u8>,
+{
     type Error = ();
 
-    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Self::Error> {
-        let header = bytes[0];
-        if header != 0 {
-            return Err(());
-        }
-        let key_len = bytes[1];
-        let key = String::from_utf8(bytes[2..2 + key_len as usize].to_vec()).unwrap();
-        Ok(DeleteCommand(key))
+    fn from_bytes(bytes: T) -> Result<(Self, T), ()> {
+        todo!()
     }
+}
+
+impl<T> ParseFromBytes<T> for Mutation
+where
+    T: Iterator<Item = u8>,
+{
+    type Error = ();
+
+    fn from_bytes(mut bytes: T) -> Result<(Self, T), Self::Error> {
+        let header = bytes.next().ok_or(())?;
+        match header {
+            1 => {
+                let (cmd, rest) = DeleteCommand::from_bytes(bytes)?;
+                Ok((Mutation::Delete(cmd), rest))
+            }
+            2 => {
+                let (cmd, rest) = PutCommand::from_bytes(bytes)?;
+                Ok((Mutation::Put(cmd), rest))
+            }
+            _ => Err(()),
+        }
+    }
+}
+
+pub fn get_value_from_buffer<T: Iterator<Item= u8>>(bytes: T) -> Result<Option<String>, ()> {
+    let mut rest = bytes;
+    let mut value: Option<String> = None;
+    while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
+        match mutation {
+            Mutation::Put(PutCommand(k, v)) => {
+                value = Some(v);
+            }
+            Mutation::Delete(DeleteCommand(k)) => {
+                value = None;
+            }
+        }
+        rest = new_rest;
+    }
+    Ok(value)
+}
+
+
+pub fn get_value_from_mutations_ref<'a, T: Iterator<Item = &'a Mutation>>(
+    muts: T,
+    key: &str,
+) -> Option<String> {
+    let mut value: Option<String> = None;
+    for m in muts {
+        match m {
+            Mutation::Put(PutCommand(k, v)) => {
+                if k == key {
+                    value = Some(v.clone());
+                }
+            }
+            Mutation::Delete(DeleteCommand(k)) => {
+                if k == key {
+                    value = None;
+                }
+            }
+        }
+    }
+    value
+}
+
+pub fn get_value_from_mutations<T: Iterator<Item = Mutation>>(
+    muts: &mut T,
+    key: &str,
+) -> Option<String> {
+    let mut value: Option<String> = None;
+    for m in muts {
+        match m {
+            Mutation::Put(PutCommand(k, v)) => {
+                if k == key {
+                    value = Some(v);
+                }
+            }
+            Mutation::Delete(DeleteCommand(k)) => {
+                if k == key {
+                    value = None;
+                }
+            }
+        }
+    }
+    value
+}
+
+pub fn parse_buffer_to_mutations<T: Iterator<Item = u8>>(bytes: T) -> Result<Vec<Mutation>, ()> {
+    let mut mutations = Vec::new();
+    let mut rest = bytes;
+    while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
+        mutations.push(mutation);
+        rest = new_rest;
+    }
+    Ok(mutations)
 }
 
 impl ByteLength for PutCommand {
@@ -85,7 +171,7 @@ impl IntoBytes for DeleteCommand {
         let mut bytes = Vec::new();
         let key_bytes = self.0.into_bytes();
         let key_len = key_bytes.len() as u8;
-        let header: u8 = 0;
+        let header: u8 = 1;
 
         bytes.push(header);
         bytes.push(key_len);
@@ -123,19 +209,6 @@ impl IntoBytes for Mutation {
         match self {
             Mutation::Put(cmd) => cmd.into_bytes(),
             Mutation::Delete(cmd) => cmd.into_bytes(),
-        }
-    }
-}
-
-impl FromBytes for Mutation {
-    type Error = ();
-
-    fn from_bytes(bytes: Vec<u8>) -> Result<Self, Self::Error> {
-        let header = bytes[0];
-        match header {
-            0 => Ok(Mutation::Delete(DeleteCommand::from_bytes(bytes)?)),
-            1 => Ok(Mutation::Put(PutCommand::from_bytes(bytes)?)),
-            _ => Err(()),
         }
     }
 }
