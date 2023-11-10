@@ -63,17 +63,16 @@ impl StorageEngine {
                 }
             }
             Command::Exit => {
-                self.flush_wal().await.unwrap();
+                self.flush_wal(false).await.unwrap();
             }
         }
-        // println!("WAL buffer: {:?}", self.wal_buffer);
         Ok(())
     }
 
     pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
         // Check if the wal buffer has space for the mutation
         if cmd.byte_len() > self.remaining_space_for_wal {
-            self.flush_wal().await.unwrap();
+            self.flush_wal(true).await.unwrap();
         }
         self.wal_buffer.push(Mutation::Put(cmd));
         Ok(())
@@ -138,13 +137,13 @@ impl StorageEngine {
     pub async fn delete(&mut self, cmd: DeleteCommand) -> Result<(), ()> {
         // Check if the wal buffer has space for the mutation
         if cmd.byte_len() > self.remaining_space_for_wal {
-            self.flush_wal().await.unwrap();
+            self.flush_wal(true).await.unwrap();
         }
         self.wal_buffer.push(Mutation::Delete(cmd));
         Ok(())
     }
 
-    pub async fn flush_wal(&mut self) -> Result<(), ()> {
+    pub async fn flush_wal(&mut self, fill_remaining_space: bool) -> Result<(), ()> {
         println!("Flushing wal");
         // Try to not reallocate?
         self.file
@@ -158,6 +157,13 @@ impl StorageEngine {
             )
             .await
             .unwrap();
+
+        if fill_remaining_space {
+            self.file
+                .write_all(&vec![0; self.remaining_space_for_wal])
+                .await
+                .unwrap();
+        }
 
         self.remaining_space_for_wal = PAGE_SIZE;
         self.unused_page_size = 0;
