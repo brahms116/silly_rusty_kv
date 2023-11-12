@@ -5,9 +5,8 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 pub struct StorageEngine {
     file: File,
-    // Tmp hack
     read_file: File,
-    wal_buffer: Vec<Mutation>,
+    pub wal_buffer: Vec<Mutation>,
     remaining_space_for_wal: usize,
     unused_page_size: usize,
     num_pages: usize,
@@ -146,17 +145,16 @@ impl StorageEngine {
     pub async fn flush_wal(&mut self, fill_remaining_space: bool) -> Result<(), ()> {
         println!("Flushing wal");
         // Try to not reallocate?
-        self.file
-            .write_all(
-                &self
-                    .wal_buffer
-                    .drain(..)
-                    .map(|mutation| mutation.into_bytes())
-                    .flatten()
-                    .collect::<Vec<u8>>(),
-            )
-            .await
-            .unwrap();
+        let bytes = self
+            .wal_buffer
+            .drain(..)
+            .map(|mutation| {
+                mutation.into_bytes()
+            })
+            .flatten()
+            .collect::<Vec<u8>>();
+
+        self.file.write_all(&bytes).await.unwrap();
 
         if fill_remaining_space {
             self.file
@@ -165,6 +163,7 @@ impl StorageEngine {
                 .unwrap();
         }
 
+        self.file.sync_all().await.unwrap();
         self.remaining_space_for_wal = PAGE_SIZE;
         self.unused_page_size = 0;
         self.num_pages += 1;

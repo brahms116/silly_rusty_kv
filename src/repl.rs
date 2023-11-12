@@ -1,26 +1,42 @@
 use super::storage::*;
 use crate::{execute::execute_command, setup::setup_db};
+use tokio::io::{stdin, AsyncBufReadExt, BufReader};
+use tokio::select;
+use tokio::sync::oneshot::{channel, Receiver};
 
 use super::command::*;
 
 pub async fn run_repl() {
     let (mut storage, index) = setup_db();
+
+    // Make a oneshot
+    // Send the sender to another task awaiting ctrl-c
+    // Send the receiver to inner loop who does a select! between waiting
+    // for input and waiting for ctrl-c
+
+    let (sender, mut receiver) = channel::<()>();
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        sender.send(()).unwrap();
+    });
+
     println!("Welcome to Silly Rusty KV!");
     loop {
-        if inner_loop(&mut storage, index).await {
+        if inner_loop(&mut storage, index, &mut receiver).await {
             break;
         };
     }
     println!("Goodbye!");
+    std::process::exit(0);
 }
 
-async fn inner_loop(storage: &mut StorageEngine, index: ()) -> bool {
-    let mut input = String::new();
-    // read line from stdin
-    std::io::stdin().read_line(&mut input).unwrap();
+async fn execute_user_input(storage: &mut StorageEngine, index: (), input: Option<String>) -> bool {
+    if let None = input {
+        return true;
+    }
 
-    // parse command
-    let cmd = input.parse::<Command>();
+    let cmd = input.unwrap().parse::<Command>();
 
     if let Err(err) = cmd {
         println!("Error: {}", err);
@@ -32,4 +48,18 @@ async fn inner_loop(storage: &mut StorageEngine, index: ()) -> bool {
         return should_quit;
     }
     return false;
+}
+
+async fn inner_loop(storage: &mut StorageEngine, index: (), receiver: &mut Receiver<()>) -> bool {
+    let mut reader = BufReader::new(stdin()).lines();
+
+    select! {
+        _ = receiver => {
+            println!("Received ctrl-c");
+            return execute_user_input(storage, index, Some("EXIT".into())).await;
+        }
+        input = reader.next_line() => {
+            return execute_user_input(storage, index, input.unwrap()).await;
+        }
+    }
 }
