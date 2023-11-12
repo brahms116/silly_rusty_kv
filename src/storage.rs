@@ -77,17 +77,17 @@ impl StorageEngine {
         Ok(())
     }
 
-    pub async fn get_from_wal(&mut self, cmd: &GetCommand) -> Result<Option<&str>, ()> {
+    pub async fn get_from_wal(&mut self, cmd: &GetCommand) -> Result<Option<Option<&str>>, ()> {
         let wal_len = self.wal_buffer.len();
         for i in 0..wal_len {
             if let Mutation::Delete(delete_cmd) = &self.wal_buffer[wal_len - i - 1] {
                 if delete_cmd.0 == cmd.0 {
-                    return Ok(None);
+                    return Ok(Some(None));
                 }
             }
             if let Mutation::Put(put_cmd) = &self.wal_buffer[wal_len - i - 1] {
                 if put_cmd.0 == cmd.0 {
-                    return Ok(Some(&put_cmd.1));
+                    return Ok(Some(Some(&put_cmd.1)));
                 }
             }
         }
@@ -99,7 +99,7 @@ impl StorageEngine {
         {
             let wal_value = self.get_from_wal(cmd).await.unwrap();
             if let Some(value) = wal_value {
-                return Ok(Some(value.into()));
+                return Ok(value.map(|value| value.to_string()));
             }
         }
 
@@ -148,9 +148,7 @@ impl StorageEngine {
         let bytes = self
             .wal_buffer
             .drain(..)
-            .map(|mutation| {
-                mutation.into_bytes()
-            })
+            .map(|mutation| mutation.into_bytes())
             .flatten()
             .collect::<Vec<u8>>();
 
