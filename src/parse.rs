@@ -178,7 +178,7 @@ fn parse_tokens(mut tokens: impl Iterator<Item = Token>) -> Result<Command, Stri
     }
 }
 
-fn process_put_key_word_with_key(
+fn process_put_keyword_with_key(
     ident: String,
     mut tokens: impl Iterator<Item = Token>,
 ) -> Result<Command, String> {
@@ -206,7 +206,7 @@ fn process_put_keyword(mut tokens: impl Iterator<Item = Token>) -> Result<Comman
     }
     let ident = ident.unwrap();
     match ident {
-        Token::Ident(ident) => process_put_key_word_with_key(ident, tokens),
+        Token::Ident(ident) => process_put_keyword_with_key(ident, tokens),
         _ => Err("Expected identifier after PUT".into()),
     }
 }
