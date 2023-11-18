@@ -38,7 +38,6 @@ impl Lexer {
         }
     }
 
-    // TODO: should have used a more iterative approach as opposed to recursive
     fn lex(mut self) -> Result<Vec<Token>, String> {
         while let Some(c) = self.input.get(self.pos) {
             if c.is_whitespace() {
