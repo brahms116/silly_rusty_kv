@@ -44,9 +44,9 @@ impl Lexer {
             if c.is_whitespace() {
                 self.pos += 1;
             } else if c.is_alphanumeric() {
-                self.key_or_ident()?;
+                self.lex_alphanumeric()?;
             } else if c == &'"' {
-                self.literal()?;
+                self.lex_literal()?;
             } else {
                 return Err(format!("Unexpected character: {}", c));
             }
@@ -54,7 +54,7 @@ impl Lexer {
         Ok(self.tokens)
     }
 
-    fn key_or_ident(&mut self) -> Result<(), String> {
+    fn lex_alphanumeric(&mut self) -> Result<(), String> {
         while let Some(c) = self.input.get(self.pos) {
             self.pos += 1;
             if c.is_alphanumeric() {
@@ -87,7 +87,7 @@ impl Lexer {
         Ok(())
     }
 
-    fn literal(&mut self) -> Result<(), String> {
+    fn lex_literal(&mut self) -> Result<(), String> {
         // Skip the first '"'
         self.pos += 1;
 
@@ -157,7 +157,7 @@ fn parse_identifier(
     }
 }
 
-fn process_put_key_word_with_key(
+fn process_put_keyword_with_key(
     ident: String,
     tokens: &mut impl Iterator<Item = Token>,
 ) -> Result<Command, String> {
@@ -174,7 +174,7 @@ fn process_put_key_word_with_key(
 
 fn process_put_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
     let ident = parse_identifier(tokens, "PUT")?;
-    process_put_key_word_with_key(ident, tokens)
+    process_put_keyword_with_key(ident, tokens)
 }
 
 fn process_get_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
