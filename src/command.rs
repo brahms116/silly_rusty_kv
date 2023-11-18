@@ -1,3 +1,4 @@
+use crate::parse::*;
 use std::str::FromStr;
 
 pub trait ByteLength {
@@ -89,7 +90,10 @@ where
     }
 }
 
-pub fn get_value_from_buffer<T: Iterator<Item = u8>>(bytes: T, key: &str) -> Result<Option<String>, ()> {
+pub fn get_value_from_buffer<T: Iterator<Item = u8>>(
+    bytes: T,
+    key: &str,
+) -> Result<Option<String>, ()> {
     let mut rest = bytes;
     let mut value: Option<String> = None;
     while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
@@ -236,27 +240,7 @@ pub enum Command {
 
 impl FromStr for Command {
     type Err = String;
-
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // need a better split here soon
-        let mut iter = s.split_whitespace();
-        let cmd = iter.next().ok_or("No command")?;
-        match cmd {
-            "PUT" => {
-                let key = iter.next().ok_or("No key")?;
-                let value = iter.next().ok_or("No value")?;
-                Ok(Command::Put(PutCommand(key.to_string(), value.to_string())))
-            }
-            "DELETE" => {
-                let key = iter.next().ok_or("No key")?;
-                Ok(Command::Delete(DeleteCommand(key.to_string())))
-            }
-            "GET" => {
-                let key = iter.next().ok_or("No key")?;
-                Ok(Command::Get(GetCommand(key.to_string())))
-            }
-            "EXIT" => Ok(Command::Exit),
-            _ => Err("Unknown command".to_string()),
-        }
+        parse_command(s.to_string())
     }
 }
