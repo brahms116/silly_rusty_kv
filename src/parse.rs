@@ -169,80 +169,51 @@ fn parse_tokens(mut tokens: impl Iterator<Item = Token>) -> Result<Command, Stri
     let next = next.unwrap();
     match next {
         Token::Keyword(keyword) => match keyword {
-            Keyword::Get => process_get_keyword(tokens),
-            Keyword::Put => process_put_keyword(tokens),
-            Keyword::Delete => process_delete_keyword(tokens),
+            Keyword::Get => process_get_keyword(&mut tokens),
+            Keyword::Put => process_put_keyword(&mut tokens),
+            Keyword::Delete => process_delete_keyword(&mut tokens),
             Keyword::Exit => Ok(Command::Exit),
         },
         _ => Err("Expected keyword GET, PUT or DELETE".into()),
     }
 }
 
-fn process_put_keyword_with_key(
-    ident: String,
-    mut tokens: impl Iterator<Item = Token>,
-) -> Result<Command, String> {
-    let next = tokens.next();
-    if next.is_none() {
-        return Err("Expected literal after identifier".into());
+fn parse_identifier(tokens: &mut impl Iterator<Item = Token>, keyword: &str) -> Result<String, String> {
+    match tokens.next() {
+        Some(Token::Ident(ident)) => Ok(ident),
+        _ => Err(format!("Expected identifier after {}", keyword)),
     }
-    let literal = next.unwrap();
-    match literal {
-        Token::Literal(literal) => {
-            let next = tokens.next();
-            if next.is_some() {
-                return Err("Unexpected token after literal".into());
+}
+
+fn process_put_key_word_with_key(ident: String, tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+    match tokens.next() {
+        Some(Token::Literal(literal)) => {
+            if tokens.next().is_some() {
+                return Err("Unexpected token after literal".to_string());
             }
             Ok(Command::Put(PutCommand(ident, literal)))
         }
-        _ => Err("Expected literal after identifier".into()),
+        _ => Err("Expected literal after identifier".to_string()),
     }
 }
 
-fn process_put_keyword(mut tokens: impl Iterator<Item = Token>) -> Result<Command, String> {
-    let ident = tokens.next();
-    if ident.is_none() {
-        return Err("Expected identifier after PUT".into());
-    }
-    let ident = ident.unwrap();
-    match ident {
-        Token::Ident(ident) => process_put_keyword_with_key(ident, tokens),
-        _ => Err("Expected identifier after PUT".into()),
-    }
+fn process_put_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+    let ident = parse_identifier(tokens, "PUT")?;
+    process_put_key_word_with_key(ident, tokens)
 }
 
-fn process_get_keyword(mut tokens: impl Iterator<Item = Token>) -> Result<Command, String> {
-    let ident = tokens.next();
-    if ident.is_none() {
-        return Err("Expected identifier after GET".into());
+fn process_get_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+    let ident = parse_identifier(tokens, "GET")?;
+    if tokens.next().is_some() {
+        return Err("Unexpected token after identifier".to_string());
     }
-    let ident = ident.unwrap();
-    match ident {
-        Token::Ident(ident) => {
-            let next = tokens.next();
-            if next.is_some() {
-                return Err("Unexpected token after identifier".into());
-            }
-            Ok(Command::Get(GetCommand(ident)))
-        }
-        _ => Err("Expected identifier after GET".into()),
-    }
+    Ok(Command::Get(GetCommand(ident)))
 }
 
-fn process_delete_keyword(mut tokens: impl Iterator<Item = Token>) -> Result<Command, String> {
-    let ident = tokens.next();
-    if ident.is_none() {
-        return Err("Expected identifier after DELETE".into());
+fn process_delete_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+    let ident = parse_identifier(tokens, "DELETE")?;
+    if tokens.next().is_some() {
+        return Err("Unexpected token after identifier".to_string());
     }
-    let ident = ident.unwrap();
-    match ident {
-        Token::Ident(ident) => {
-            let next = tokens.next();
-            if next.is_some() {
-                return Err("Unexpected token after identifier".into());
-            }
-            Ok(Command::Delete(DeleteCommand(ident)))
-        }
-        _ => Err("Expected identifier after DELETE".into()),
-    }
+    Ok(Command::Delete(DeleteCommand(ident)))
 }
