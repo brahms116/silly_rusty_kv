@@ -40,124 +40,93 @@ impl Lexer {
 
     // TODO: should have used a more iterative approach as opposed to recursive
     fn lex(mut self) -> Result<Vec<Token>, String> {
-        let c = self.input.get(self.pos);
-        if c.is_none() {
-            return Ok(self.tokens);
-        }
-        let c = c.unwrap();
-
-        if c.is_whitespace() {
-            self.pos += 1;
-            self.lex()
-        } else if c.is_alphanumeric() {
-            self.key_or_ident()
-        } else if c == &'"' {
-            self.literal()
-        } else {
-            Err(format!("Unexpected character: {}", c))
-        }
-    }
-
-    fn key_or_ident(mut self) -> Result<Vec<Token>, String> {
-        let c = self.input.get(self.pos);
-        if c.is_none() {
-            return self.key_or_indent();
-        }
-        let c = c.unwrap();
-
-        if c.is_alphanumeric() {
-            self.buffer.push(*c);
-            self.pos += 1;
-            self.key_or_ident()
-        } else if c.is_whitespace() {
-            match self.buffer.as_str() {
-                "get" | "GET" => {
-                    self.tokens.push(Token::Keyword(Keyword::Get));
-                }
-                "put" | "PUT" => {
-                    self.tokens.push(Token::Keyword(Keyword::Put));
-                }
-                "delete" | "DELETE" => {
-                    self.tokens.push(Token::Keyword(Keyword::Delete));
-                }
-                "exit" | "EXIT" => {
-                    self.tokens.push(Token::Keyword(Keyword::Exit));
-                }
-                _ => {
-                    self.tokens.push(Token::Ident(self.buffer.clone()));
-                }
+        while let Some(c) = self.input.get(self.pos) {
+            if c.is_whitespace() {
+                self.pos += 1;
+            } else if c.is_alphanumeric() {
+                self.key_or_ident()?;
+            } else if c == &'"' {
+                self.literal()?;
+            } else {
+                return Err(format!("Unexpected character: {}", c));
             }
-            self.buffer.clear();
-            self.lex()
-        } else {
-            Err(format!("Invalid token {}", self.buffer))
         }
+        Ok(self.tokens)
     }
 
-    fn key_or_indent(mut self) -> Result<Vec<Token>, String> {
-        if self.buffer.is_empty() {
-            return Ok(self.tokens);
+    fn key_or_ident(&mut self) -> Result<(), String> {
+        while let Some(c) = self.input.get(self.pos) {
+            self.pos += 1;
+            if c.is_alphanumeric() {
+                self.buffer.push(*c);
+            } else if c.is_whitespace() {
+                break;
+            } else {
+                return Err(format!("Unexpected character: {}", c));
+            }
         }
+
         match self.buffer.as_str() {
-            "get" | "GET" => {
+            "GET" | "get" => {
                 self.tokens.push(Token::Keyword(Keyword::Get));
             }
-            "put" | "PUT" => {
+            "PUT" | "put" => {
                 self.tokens.push(Token::Keyword(Keyword::Put));
             }
-            "delete" | "DELETE" => {
+            "DELETE" | "delete" => {
                 self.tokens.push(Token::Keyword(Keyword::Delete));
             }
-            "exit" | "EXIT" => {
+            "EXIT" | "exit" => {
                 self.tokens.push(Token::Keyword(Keyword::Exit));
             }
             _ => {
                 self.tokens.push(Token::Ident(self.buffer.clone()));
             }
         }
-        Ok(self.tokens)
+        self.buffer.clear();
+        Ok(())
     }
 
-    fn literal(mut self) -> Result<Vec<Token>, String> {
-        let c = self.input.get(self.pos);
-        if c.is_none() {
-            return Err("Unexpected end of input".into());
-        }
-        let c = c.unwrap();
+    fn literal(&mut self) -> Result<(), String> {
+        // Skip the first '"'
+        self.pos += 1;
 
-        match c {
-            '"' => {
-                self.pos += 1;
-                self.tokens.push(Token::Literal(self.buffer.clone()));
-                self.buffer.clear();
-                self.lex()
-            }
-            '\\' => {
-                self.pos += 1;
-                self.literal_in_escape()
-            }
-            _ => {
-                self.buffer.push(*c);
-                self.pos += 1;
-                self.literal()
-            }
-        }
-    }
+        // Flag to indicate if the next character is escaped
+        let mut is_escaped = false;
 
-    fn literal_in_escape(mut self) -> Result<Vec<Token>, String> {
-        let c = self.input.get(self.pos);
-        if c.is_none() {
-            return Err("Unexpected end of input".into());
-        }
-        let c = c.unwrap();
-        match c {
-            '"' | 'n' | 't' | '\\' => {
-                self.buffer.push(*c);
-                self.pos += 1;
-                self.literal()
+        while let Some(c) = self.input.get(self.pos) {
+            println!("c: {}", c);
+            self.pos += 1;
+            if is_escaped {
+                match c {
+                    '"' | 'n' | 't' | '\\' => {
+                        self.buffer.push(*c);
+                        is_escaped = false;
+                        continue;
+                    }
+                    _ => {
+                        return Err(format!("Invalid escaped character: {}", c));
+                    }
+                }
+            } else {
+                match c {
+                    '"' => {
+                        self.tokens.push(Token::Literal(self.buffer.clone()));
+                        self.buffer.clear();
+                        return Ok(());
+                    }
+                    '\\' => {
+                        is_escaped = true;
+                        continue;
+                    }
+                    _ => {
+                        self.buffer.push(*c);
+                    }
+                }
             }
-            _ => Err(format!("Invalid escape character: {}", c)),
         }
+
+        Err(format!("Unexpected end of input, {}", self.buffer))
     }
 }
 
@@ -178,14 +147,20 @@ fn parse_tokens(mut tokens: impl Iterator<Item = Token>) -> Result<Command, Stri
     }
 }
 
-fn parse_identifier(tokens: &mut impl Iterator<Item = Token>, keyword: &str) -> Result<String, String> {
+fn parse_identifier(
+    tokens: &mut impl Iterator<Item = Token>,
+    keyword: &str,
+) -> Result<String, String> {
     match tokens.next() {
         Some(Token::Ident(ident)) => Ok(ident),
         _ => Err(format!("Expected identifier after {}", keyword)),
     }
 }
 
-fn process_put_key_word_with_key(ident: String, tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+fn process_put_key_word_with_key(
+    ident: String,
+    tokens: &mut impl Iterator<Item = Token>,
+) -> Result<Command, String> {
     match tokens.next() {
         Some(Token::Literal(literal)) => {
             if tokens.next().is_some() {
