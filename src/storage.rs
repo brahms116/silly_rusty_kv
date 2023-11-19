@@ -73,6 +73,7 @@ impl StorageEngine {
         if cmd.byte_len() > self.remaining_space_for_wal {
             self.flush_wal(true).await.unwrap();
         }
+        self.remaining_space_for_wal -= cmd.byte_len();
         self.wal_buffer.push(Mutation::Put(cmd));
         Ok(())
     }
@@ -138,6 +139,7 @@ impl StorageEngine {
         if cmd.byte_len() > self.remaining_space_for_wal {
             self.flush_wal(true).await.unwrap();
         }
+        self.remaining_space_for_wal -= cmd.byte_len();
         self.wal_buffer.push(Mutation::Delete(cmd));
         Ok(())
     }
@@ -148,7 +150,10 @@ impl StorageEngine {
         let bytes = self
             .wal_buffer
             .drain(..)
-            .map(|mutation| mutation.into_bytes())
+            .map(|mutation| {
+                println!("mutation: {:?}", mutation);
+                mutation.into_bytes()
+            })
             .flatten()
             .collect::<Vec<u8>>();
 

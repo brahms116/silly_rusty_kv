@@ -9,8 +9,10 @@ mod setup;
 mod execute;
 mod storage;
 mod parse;
+mod script;
 
 // Queue of commands
 // Takes in commands and executes them
 
 pub use repl::*;
+pub use script::*;

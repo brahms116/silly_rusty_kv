@@ -9,11 +9,6 @@ use super::command::*;
 pub async fn run_repl() {
     let (mut storage, index) = setup_db();
 
-    // Make a oneshot
-    // Send the sender to another task awaiting ctrl-c
-    // Send the receiver to inner loop who does a select! between waiting
-    // for input and waiting for ctrl-c
-
     let (sender, mut receiver) = channel::<()>();
 
     tokio::spawn(async move {
@@ -31,7 +26,7 @@ pub async fn run_repl() {
     std::process::exit(0);
 }
 
-async fn execute_user_input(storage: &mut StorageEngine, index: (), input: Option<String>) -> bool {
+pub async fn execute_user_input(storage: &mut StorageEngine, index: (), input: Option<String>) -> bool {
     if let None = input {
         return true;
     }

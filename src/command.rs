@@ -97,6 +97,7 @@ pub fn get_value_from_buffer<T: Iterator<Item = u8>>(
     let mut rest = bytes;
     let mut value: Option<String> = None;
     while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
+        println!("mutation: {:?}", mutation);
         match mutation {
             Mutation::Put(PutCommand(k, v)) => {
                 if k == key {
@@ -111,6 +112,7 @@ pub fn get_value_from_buffer<T: Iterator<Item = u8>>(
         }
         rest = new_rest;
     }
+    println!("break");
     Ok(value)
 }
 

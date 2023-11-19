@@ -94,7 +94,6 @@ impl Lexer {
         let mut is_escaped = false;
 
         while let Some(c) = self.input.get(self.pos) {
-            println!("c: {}", c);
             self.pos += 1;
             if is_escaped {
                 match c {
