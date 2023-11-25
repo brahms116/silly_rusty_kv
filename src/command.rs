@@ -93,26 +93,26 @@ where
 pub fn get_value_from_buffer<T: Iterator<Item = u8>>(
     bytes: T,
     key: &str,
-) -> Result<Option<String>, ()> {
+) -> Result<Option<Option<String>>, ()> {
     let mut rest = bytes;
-    let mut value: Option<String> = None;
+    let mut value: Option<Option<String>> = None;
     while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
-        println!("mutation: {:?}", mutation);
+        // println!("mutation: {:?}", mutation);
         match mutation {
             Mutation::Put(PutCommand(k, v)) => {
                 if k == key {
-                    value = Some(v);
+                    value = Some(Some(v));
                 }
             }
             Mutation::Delete(DeleteCommand(k)) => {
                 if k == key {
-                    value = None;
+                    value = Some(None);
                 }
             }
         }
         rest = new_rest;
     }
-    println!("break");
+    // println!("break");
     Ok(value)
 }
 

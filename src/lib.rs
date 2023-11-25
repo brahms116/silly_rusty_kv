@@ -10,6 +10,7 @@ mod execute;
 mod storage;
 mod parse;
 mod script;
+mod index;
 
 // Queue of commands
 // Takes in commands and executes them

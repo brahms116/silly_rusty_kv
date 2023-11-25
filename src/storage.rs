@@ -1,3 +1,5 @@
+use std::ops::RangeBounds;
+
 use crate::command::*;
 use crate::consts::*;
 use tokio::fs::File;
@@ -97,6 +99,7 @@ impl StorageEngine {
 
     /// Temp hack with no indices
     pub async fn get(&mut self, cmd: &GetCommand) -> Result<Option<String>, ()> {
+        // self.debug(..).await;
         {
             let wal_value = self.get_from_wal(cmd).await.unwrap();
             if let Some(value) = wal_value {
@@ -114,7 +117,7 @@ impl StorageEngine {
             self.read_file.read_exact(&mut buf).await.unwrap();
 
             if let Some(value) = get_value_from_buffer(buf.into_iter(), &cmd.0).unwrap() {
-                return Ok(Some(value.into()));
+                return Ok(value);
             }
         }
 
@@ -122,13 +125,15 @@ impl StorageEngine {
         for i in 0..self.num_pages {
             let mut buf = vec![0; PAGE_SIZE];
             self.read_file
-                .seek(std::io::SeekFrom::Start((self.num_pages - 1 - i) as u64))
+                .seek(std::io::SeekFrom::Start(
+                    (self.num_pages - 1 - i) as u64 * PAGE_SIZE as u64,
+                ))
                 .await
                 .unwrap();
             self.read_file.read_exact(&mut buf).await.unwrap();
 
             if let Some(value) = get_value_from_buffer(buf.into_iter(), &cmd.0).unwrap() {
-                return Ok(Some(value.into()));
+                return Ok(value);
             }
         }
         Ok(None)
@@ -144,6 +149,57 @@ impl StorageEngine {
         Ok(())
     }
 
+    /// Debug function to parse and print the contents of the file page by page
+    ///
+    /// # Arguments
+    /// * `pages` - The range of pages to print
+    pub async fn debug(&mut self, pages: impl RangeBounds<usize>) {
+        // Get the starting page
+        let start_page = match pages.start_bound() {
+            std::ops::Bound::Included(start_page) => *start_page,
+            std::ops::Bound::Excluded(start_page) => *start_page + 1,
+            std::ops::Bound::Unbounded => 0,
+        };
+
+        // Get the ending page
+        let end_page = match pages.end_bound() {
+            std::ops::Bound::Included(end_page) => *end_page,
+            std::ops::Bound::Excluded(end_page) => *end_page - 1,
+            std::ops::Bound::Unbounded => self.num_pages,
+        };
+
+        // If the end page exceeds the number of pages, set it to the number of pages
+        let end_page = if end_page > self.num_pages {
+            self.num_pages
+        } else {
+            end_page
+        };
+
+        // Loop through the pages
+        for page in start_page..end_page {
+            let mut buf = vec![0; PAGE_SIZE];
+            self.read_file
+                .seek(std::io::SeekFrom::Start(page as u64 * PAGE_SIZE as u64))
+                .await
+                .unwrap();
+            self.read_file.read_exact(&mut buf).await.unwrap();
+
+            // Print the page number with a start marker
+            println!("Page: {} START", page);
+
+            // Collect the mutations from the buffer as a vector or mutations
+            let mutations = parse_buffer_to_mutations(buf.into_iter()).unwrap();
+
+            // Print the mutations
+            for mutation in mutations {
+                println!("{:?}", mutation);
+            }
+
+            // Print the page number with an end marker
+            println!("Page: {} END", page);
+        }
+    }
+
     pub async fn flush_wal(&mut self, fill_remaining_space: bool) -> Result<(), ()> {
         println!("Flushing wal");
         // Try to not reallocate?
@@ -151,7 +207,7 @@ impl StorageEngine {
             .wal_buffer
             .drain(..)
             .map(|mutation| {
-                println!("mutation: {:?}", mutation);
+                // println!("mutation: {:?}", mutation);
                 mutation.into_bytes()
             })
             .flatten()
