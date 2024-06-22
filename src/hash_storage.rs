@@ -5,12 +5,25 @@ use crate::command::*;
 
 pub struct HashStorage {
     /// The file containing the look up table and the global level
+    ///
+    /// ## File layout
+    /// - First byte is the global level
+    /// - Next is followed by the list of u64s stored in LE
+    /// The length of this list is 2^global_level
+    ///
+    /// There are no pages in this file, the entire file is loaded and saved all at once
     directory_file: File,
 
     /// The file containing the buckets
+    ///
+    /// ## File layout
+    /// - First u64 is the number of current buckets
+    /// - Followed by pages of PAGE_SIZE, with each page being a bucket
     buckets_file: File,
 
     /// The global level of the index
+    ///
+    /// Saved and loaded from the directory file
     global_level: u8,
 
     /// Pointers to the buckets
@@ -26,6 +39,8 @@ pub struct HashStorage {
     /// 100 -> element 4
     /// 101 -> element 5
     /// ... and so on
+    ///
+    /// This is loaded and saved from the directory file
     bucket_addresses: Vec<u64>,
 }
 
