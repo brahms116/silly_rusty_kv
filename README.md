@@ -1,6 +1,6 @@
 # Toy database
 
-A toy experiment to implement an append-only database with Rust.
+A toy experiment to implement a database with Rust.
 
 ## Usage
 
@@ -20,7 +20,7 @@ Commands include:
 
 ## TODOs:
 
--   [ ] Implment an index for the database
+-   [ ] Implment a hash storage engine for the database
     -   [ ] What performance impacts does this have?
 -   [ ] Investigate why and if holding the stdin pipe for longer is causing the program
         to block writes.
