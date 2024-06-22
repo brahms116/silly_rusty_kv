@@ -11,6 +11,8 @@ mod storage;
 mod parse;
 mod script;
 mod index;
+mod hash_storage;
+mod bytes;
 
 // Queue of commands
 // Takes in commands and executes them
