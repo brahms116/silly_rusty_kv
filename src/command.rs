@@ -1,6 +1,7 @@
-use crate::bytes::*;
 use crate::parse::*;
 use std::str::FromStr;
+use crate::bytes::*;
+
 
 impl IntoBytes for PutCommand {
     fn into_bytes(self) -> Vec<u8> {

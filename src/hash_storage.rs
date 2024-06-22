@@ -1,3 +1,5 @@
+use crate::bytes::*;
+use crate::consts::PAGE_SIZE;
 use std::io::SeekFrom;
 /// Extensible hashing storage
 use tokio::fs::File;
@@ -190,6 +192,12 @@ impl HashStorage {
     }
 
     pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
+        // 1. Hash the key
+        // 2. Conside the last n bits, with N being the global level
+        // 3. Look up the address of the bucket
+        // 4. Load the bucket
+        // 5. Put command in or split the bucket
+
         todo!()
     }
 
@@ -204,9 +212,56 @@ impl HashStorage {
 
 /// Rust representation of a bucket
 pub struct Bucket {
+    /// The nth bucket in the bucket file
+    bucket_number: u64,
+
     /// The local level of the bucket
     level: u8,
 
+    /// The number of bytes remaining available in the bucket
+    remaining_byte_space: usize,
+
     /// The records contained in the bucket
     records: Vec<PutCommand>,
+}
+
+impl IntoBytes for Bucket {
+    fn into_bytes(self) -> Vec<u8> {
+         
+    }
+}
+
+
+impl<T> ParseFromBytes<T> for Bucket
+where
+    T: Iterator<Item = u8>,
+{
+    type Error = ();
+
+    fn from_bytes(mut bytes: T) -> Result<(Self, T), Self::Error> {
+        // Take page size from it because we need to know the remaining byte size
+        let mut page = bytes.by_ref().take(PAGE_SIZE).peekable();
+        let mut records: Vec<PutCommand> = vec![];
+
+        loop {
+            if page.next_if(|x| *x == 0).is_some() {
+                break;
+            }
+            let (cmd, rest) = PutCommand::from_bytes(page).map_err(|_| ())?;
+            records.push(cmd);
+            page = rest;
+        }
+
+        let remaining_byte_space = page.count();
+
+        Ok((
+            Bucket {
+                bucket_number: 0,
+                level: 0,
+                records,
+                remaining_byte_space,
+            },
+            bytes,
+        ))
+    }
 }
