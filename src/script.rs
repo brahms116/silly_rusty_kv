@@ -25,6 +25,8 @@ async fn process_lines_from_script(
     reciever: &mut mpsc::Receiver<String>,
     ctlrc_signal: &mut oneshot::Receiver<()>,
 ) {
+    // TODO: Need to handle the ctlrc_signal
+
     let (mut storage, index) = setup_db();
     while let Some(line) = reciever.recv().await {
         execute_user_input(&mut storage, index, Some(line)).await;

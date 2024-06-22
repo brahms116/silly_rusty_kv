@@ -26,7 +26,11 @@ pub async fn run_repl() {
     std::process::exit(0);
 }
 
-pub async fn execute_user_input(storage: &mut StorageEngine, index: (), input: Option<String>) -> bool {
+pub async fn execute_user_input(
+    storage: &mut StorageEngine,
+    index: (),
+    input: Option<String>,
+) -> bool {
     if let None = input {
         return true;
     }
@@ -50,6 +54,7 @@ async fn inner_loop(storage: &mut StorageEngine, index: (), receiver: &mut Recei
 
     select! {
         _ = receiver => {
+            // TODO: Handle reciever error
             println!("Received ctrl-c");
             return execute_user_input(storage, index, Some("EXIT".into())).await;
         }

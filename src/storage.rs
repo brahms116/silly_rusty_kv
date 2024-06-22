@@ -38,10 +38,10 @@ impl StorageEngine {
         // Get the remaining space for the wal
         let remaining_space_for_wal = PAGE_SIZE - last_page_size;
 
-        println!(
-            "File size: {}, last page size: {}, num pages: {}, remaining space for wal: {}",
-            file_size, last_page_size, num_pages, remaining_space_for_wal
-        );
+        // println!(
+        //     "File size: {}, last page size: {}, num pages: {}, remaining space for wal: {}",
+        //     file_size, last_page_size, num_pages, remaining_space_for_wal
+        // );
         Self {
             file: file.into(),
             read_file: read_file.into(),
@@ -201,7 +201,7 @@ impl StorageEngine {
     }
 
     pub async fn flush_wal(&mut self, fill_remaining_space: bool) -> Result<(), ()> {
-        println!("Flushing wal");
+        // println!("Flushing wal");
         // Try to not reallocate?
         let bytes = self
             .wal_buffer
