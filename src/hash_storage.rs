@@ -1,7 +1,7 @@
-use crate::bytes::*;
-use crate::consts::PAGE_SIZE;
-use std::io::SeekFrom;
 /// Extensible hashing storage
+/// TODO: Use the constants instead of weird having random numbers everywhere
+use crate::consts::*;
+use std::io::SeekFrom;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
@@ -21,15 +21,15 @@ fn addr_count_to_global_level(mut length: usize) -> u8 {
     return result;
 }
 
-async fn load_bucket_file(file: &mut File) -> u64 {
+async fn load_bucket_file(file: &mut File) -> u32 {
     if file.metadata().await.unwrap().len() == 0 {
         return 0;
     }
     file.seek(SeekFrom::Start(0)).await.unwrap();
-    return file.read_u64_le().await.unwrap();
+    return file.read_u32_le().await.unwrap();
 }
 
-async fn save_bucket_file(bucket_count: u64, file: &mut File) {
+async fn save_bucket_file(bucket_count: u32, file: &mut File) {
     file.seek(SeekFrom::Start(0)).await.unwrap();
     let buf = bucket_count.to_le_bytes();
     return file.write_all(&buf).await.unwrap();
@@ -103,13 +103,13 @@ pub struct HashStorage {
     /// The file containing the buckets
     ///
     /// ## File layout
-    /// - First u64 is the number of current buckets
+    /// - First u32 is the number of current buckets
     /// - Followed by pages of PAGE_SIZE, with each page being a bucket
     buckets_file: File,
 
     /// The current number of buckets, we need this to know
     /// where to create new buckets, loaded from the buckets file
-    bucket_count: u64,
+    bucket_count: u32,
 
     /// The global level of the index
     ///
@@ -193,10 +193,15 @@ impl HashStorage {
 
     pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
         // 1. Hash the key
+
+        let (key, value) = cmd;
+
+
         // 2. Conside the last n bits, with N being the global level
         // 3. Look up the address of the bucket
         // 4. Load the bucket
         // 5. Put command in or split the bucket
+
 
         todo!()
     }
@@ -211,9 +216,15 @@ impl HashStorage {
 }
 
 /// Rust representation of a bucket
+///
+/// ## Binary layout
+///
+/// - First byte is the level
+/// - Rest are records
+///
 pub struct Bucket {
     /// The nth bucket in the bucket file
-    bucket_number: u64,
+    bucket_number: usize,
 
     /// The local level of the bucket
     level: u8,
@@ -222,46 +233,100 @@ pub struct Bucket {
     remaining_byte_space: usize,
 
     /// The records contained in the bucket
-    records: Vec<PutCommand>,
+    records: Vec<Record>,
 }
 
-impl IntoBytes for Bucket {
-    fn into_bytes(self) -> Vec<u8> {
-         
-    }
-}
+impl Bucket {
+    fn parse_from_bytes(bytes: &[u8], bucket_number: usize) -> Result<(Self, &[u8]), ()> {
+        let mut page = &bytes[0..PAGE_SIZE];
+        let level = bytes[0];
+        let mut records = vec![];
 
-
-impl<T> ParseFromBytes<T> for Bucket
-where
-    T: Iterator<Item = u8>,
-{
-    type Error = ();
-
-    fn from_bytes(mut bytes: T) -> Result<(Self, T), Self::Error> {
-        // Take page size from it because we need to know the remaining byte size
-        let mut page = bytes.by_ref().take(PAGE_SIZE).peekable();
-        let mut records: Vec<PutCommand> = vec![];
-
-        loop {
-            if page.next_if(|x| *x == 0).is_some() {
-                break;
-            }
-            let (cmd, rest) = PutCommand::from_bytes(page).map_err(|_| ())?;
-            records.push(cmd);
-            page = rest;
+        while let Ok((record, rest_page)) = Record::parse_from_bytes(page) {
+            records.push(record);
+            page = rest_page;
         }
 
-        let remaining_byte_space = page.count();
+        let records_byte_len: usize = records.iter().map(|r| r.byte_len()).sum();
+
+        let remaining_byte_space = PAGE_SIZE - BUCKET_HEADER - records_byte_len;
 
         Ok((
             Bucket {
-                bucket_number: 0,
-                level: 0,
+                bucket_number,
+                level,
                 records,
                 remaining_byte_space,
             },
-            bytes,
+            &bytes[PAGE_SIZE..],
         ))
+    }
+
+    async fn read_from_file(file: &mut File, bucket_number: u32) -> Self {
+        file.seek(SeekFrom::Start(
+            (1 + (bucket_number as usize) * PAGE_SIZE) as u64,
+        ))
+        .await
+        .unwrap();
+        let mut buf = [0; PAGE_SIZE];
+        file.read_exact(&mut buf).await.unwrap();
+        let (bucket, _) = Self::parse_from_bytes(&buf, bucket_number as usize).unwrap();
+        bucket
+    }
+
+    async fn save_to_file(&self, file: &mut File) {
+        file.seek(SeekFrom::Start((1 + self.bucket_number * PAGE_SIZE) as u64))
+            .await
+            .unwrap();
+        let mut buf = [0_u8; PAGE_SIZE];
+        buf[0] = self.level;
+        let mut ptr = 1_usize;
+        // TODO: Decide what to do with this clone
+        for record in self.records.clone().into_iter() {
+            let bytes = record.into_bytes();
+            let length = bytes.len();
+            for i in ptr..ptr + length {
+                buf[i] = bytes[i];
+            }
+            ptr = ptr + length;
+        }
+    }
+}
+
+/// The record stored in the database
+///
+/// Made of the hash the u64, and the binary data
+///
+/// ## Binary representation
+///
+/// - 1 byte header starting with 1 to indicate this is not empty space
+/// - The next 8 bytes are the hash
+/// - The next 2 bytes is the length of the value
+/// - Followed by the value in bytes
+#[derive(Clone)]
+struct Record(u64, Vec<u8>);
+
+impl Record {
+    fn into_bytes(self) -> Vec<u8> {
+        let mut result = vec![];
+        result.push(1);
+        result.extend(self.0.to_le_bytes());
+        result.extend((self.1.len() as u16).to_le_bytes());
+        result.extend(self.1);
+        return result;
+    }
+
+    fn byte_len(&self) -> usize {
+        HASH_RECORD_HEADER + HASH_LENGTH + HASH_VALUE_HEADER + self.1.len()
+    }
+
+    fn parse_from_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), ()> {
+        if bytes[0] != 1 {
+            return Err(());
+        }
+        let hash = u64::from_le_bytes(bytes[1..9].try_into().unwrap());
+        let len = u16::from_le_bytes(bytes[9..11].try_into().unwrap());
+        let value = bytes[11..(11 + len) as usize].to_owned();
+        Ok((Record(hash, value), &bytes[(11 + len as usize)..]))
     }
 }
