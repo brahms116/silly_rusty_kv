@@ -1,6 +1,8 @@
 /// Extensible hashing storage
 /// TODO: Use the constants instead of weird having random numbers everywhere
 use crate::consts::*;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::io::SeekFrom;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -193,15 +195,16 @@ impl HashStorage {
 
     pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
         // 1. Hash the key
+        let mut hasher = DefaultHasher::new();
+        cmd.0.hash(&mut hasher);
+        let hash = hasher.finish();
+        let value_bytes = cmd.1.into_bytes();
+        let record = Record(hash, value_bytes);
 
-        let (key, value) = cmd;
-
-
-        // 2. Conside the last n bits, with N being the global level
+        // 2. Conside the last n bits, with n being the global level
         // 3. Look up the address of the bucket
         // 4. Load the bucket
         // 5. Put command in or split the bucket
-
 
         todo!()
     }
