@@ -10,7 +10,6 @@ mod execute;
 mod storage;
 mod parse;
 mod script;
-mod index;
 mod hash_storage;
 mod bytes;
 
