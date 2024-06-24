@@ -25,7 +25,7 @@ fn addr_count_to_global_level(mut length: usize) -> u8 {
 
 async fn load_bucket_file(file: &mut File) -> u32 {
     if file.metadata().await.unwrap().len() == 0 {
-        return 0;
+        return 1;
     }
     file.seek(SeekFrom::Start(0)).await.unwrap();
     return file.read_u32_le().await.unwrap();
@@ -37,7 +37,7 @@ async fn save_bucket_file(bucket_count: u32, file: &mut File) {
     return file.write_all(&buf).await.unwrap();
 }
 
-async fn load_directory(file: &mut File) -> (Vec<u64>, u8) {
+async fn load_directory(file: &mut File) -> (Vec<u32>, u8) {
     // Return if the file is empty
     if file.metadata().await.unwrap().len() == 0 {
         return (vec![0], 0);
@@ -52,21 +52,17 @@ async fn load_directory(file: &mut File) -> (Vec<u64>, u8) {
     let mut result = vec![0; addr_count];
     for i in 0..addr_count {
         let start = 8 * i;
-        result.push(u64::from_le_bytes([
+        result.push(u32::from_le_bytes([
             buf[start],
             buf[start + 1],
             buf[start + 2],
             buf[start + 3],
-            buf[start + 4],
-            buf[start + 5],
-            buf[start + 6],
-            buf[start + 7],
         ]));
     }
     return (result, global_level);
 }
 
-async fn save_directory(vec: &Vec<u64>, file: &mut File) {
+async fn save_directory(vec: &Vec<u32>, file: &mut File) {
     let addr_count = vec.len();
     let global_level = addr_count_to_global_level(addr_count);
     file.seek(SeekFrom::Start(0)).await.unwrap();
@@ -79,10 +75,6 @@ async fn save_directory(vec: &Vec<u64>, file: &mut File) {
         buf[start + 1] = bytes[1];
         buf[start + 2] = bytes[2];
         buf[start + 3] = bytes[3];
-        buf[start + 4] = bytes[4];
-        buf[start + 5] = bytes[5];
-        buf[start + 6] = bytes[6];
-        buf[start + 7] = bytes[7];
     }
 
     file.write_all(&buf).await.unwrap();
@@ -96,7 +88,7 @@ pub struct HashStorage {
     ///
     /// ## File layout
     /// - First byte is the global level
-    /// - Next is followed by the list of u64s stored in LE
+    /// - Next is followed by the list of u32s stored in LE
     /// The length of this list is 2^global_level
     ///
     /// There are no pages in this file, the entire file is loaded and saved all at once
@@ -133,7 +125,7 @@ pub struct HashStorage {
     /// ... and so on
     ///
     /// This is loaded and saved from the directory file
-    bucket_addresses: Vec<u64>,
+    bucket_lookup: Vec<u32>,
 }
 
 impl HashStorage {
@@ -172,7 +164,7 @@ impl HashStorage {
             directory_file,
             bucket_count,
             buckets_file,
-            bucket_addresses,
+            bucket_lookup: bucket_addresses,
             global_level,
         }
     }
@@ -202,11 +194,89 @@ impl HashStorage {
         let record = Record(hash, value_bytes);
 
         // 2. Conside the last n bits, with n being the global level
+        let remainder = hash % 2_u64.pow(self.global_level.into());
+
         // 3. Look up the address of the bucket
+        let bucket_index = self.bucket_lookup[remainder as usize];
+
         // 4. Load the bucket
+        let mut bucket = Bucket::read_from_file(&mut self.buckets_file, bucket_index).await;
+
         // 5. Put command in or split the bucket
 
-        todo!()
+        // Easy case: It fits;
+        if bucket.remaining_byte_space >= record.byte_len() {
+            bucket.records.push(record);
+            bucket.update_remaining_byte_count();
+            bucket.save_to_file(&mut self.buckets_file).await;
+            return Ok(());
+        }
+
+        // Bucket split
+        bucket.level += 1;
+        let og_remainder = remainder % 2_u64.pow(bucket.level.into());
+
+        // Split the bucket in half into 2 Vec<Records> one with the new bucket and one with the original bucket
+        let (original, new) = bucket.records.drain(..bucket.records.len()).fold(
+            (vec![], vec![]),
+            |(mut og_, mut new_), x| {
+                let remainder = x.0 % 2_u64.pow(bucket.level.into());
+                if remainder > og_remainder {
+                    new_.push(x)
+                } else {
+                    og_.push(x)
+                }
+                (og_, new_)
+            },
+        );
+
+        // Original bucket
+        bucket.records = original;
+        bucket.update_remaining_byte_count();
+
+        // New bucket
+        let mut new_bucket = Bucket {
+            level: bucket.level,
+            records: new,
+            bucket_index: self.bucket_count as usize,
+            remaining_byte_space: 0,
+        };
+        new_bucket.update_remaining_byte_count();
+
+        // Save both buckets
+        bucket.save_to_file(&mut self.buckets_file).await;
+        new_bucket.save_to_file(&mut self.buckets_file).await;
+
+        // Local split
+        if bucket.level < self.global_level {
+            // Grab all the lookup entries which point to the existing bucket
+            let mut indices = vec![];
+            for i in 0..self.bucket_lookup.len() {
+                if self.bucket_lookup[i] as usize == bucket.bucket_index {
+                    indices.push(i);
+                }
+            }
+
+            // Re-adjust the lookup
+            for index in &indices {
+                let remainder = index % 2_usize.pow(bucket.level.into());
+                if remainder as u64 > og_remainder {
+                    self.bucket_lookup[*index] = self.bucket_count;
+                }
+            }
+
+            return Ok(());
+        }
+
+        // Global split
+
+        // Readjust the indices
+        self.bucket_lookup.extend(self.bucket_lookup.clone());
+        self.bucket_lookup[(self.bucket_count as u64 - 1 + og_remainder) as usize] =
+            self.bucket_count;
+
+        self.global_level += 1;
+        Ok(())
     }
 
     pub async fn get(&mut self, cmd: &GetCommand) -> Result<Option<String>, ()> {
@@ -226,8 +296,8 @@ impl HashStorage {
 /// - Rest are records
 ///
 pub struct Bucket {
-    /// The nth bucket in the bucket file
-    bucket_number: usize,
+    /// The nth bucket in the bucket file, 0 indexed
+    bucket_index: usize,
 
     /// The local level of the bucket
     level: u8,
@@ -250,35 +320,36 @@ impl Bucket {
             page = rest_page;
         }
 
-        let records_byte_len: usize = records.iter().map(|r| r.byte_len()).sum();
+        let mut bucket = Bucket {
+            bucket_index: bucket_number,
+            level,
+            records,
+            remaining_byte_space: 0,
+        };
+        bucket.update_remaining_byte_count();
 
-        let remaining_byte_space = PAGE_SIZE - BUCKET_HEADER - records_byte_len;
-
-        Ok((
-            Bucket {
-                bucket_number,
-                level,
-                records,
-                remaining_byte_space,
-            },
-            &bytes[PAGE_SIZE..],
-        ))
+        Ok((bucket, &bytes[PAGE_SIZE..]))
     }
 
-    async fn read_from_file(file: &mut File, bucket_number: u32) -> Self {
+    fn update_remaining_byte_count(&mut self) {
+        let records_byte_len: usize = self.records.iter().map(|r| r.byte_len()).sum();
+        self.remaining_byte_space = PAGE_SIZE - BUCKET_HEADER - records_byte_len
+    }
+
+    async fn read_from_file(file: &mut File, bucket_index: u32) -> Self {
         file.seek(SeekFrom::Start(
-            (1 + (bucket_number as usize) * PAGE_SIZE) as u64,
+            (1 + (bucket_index as usize) * PAGE_SIZE) as u64,
         ))
         .await
         .unwrap();
         let mut buf = [0; PAGE_SIZE];
         file.read_exact(&mut buf).await.unwrap();
-        let (bucket, _) = Self::parse_from_bytes(&buf, bucket_number as usize).unwrap();
+        let (bucket, _) = Self::parse_from_bytes(&buf, bucket_index as usize).unwrap();
         bucket
     }
 
     async fn save_to_file(&self, file: &mut File) {
-        file.seek(SeekFrom::Start((1 + self.bucket_number * PAGE_SIZE) as u64))
+        file.seek(SeekFrom::Start((1 + self.bucket_index * PAGE_SIZE) as u64))
             .await
             .unwrap();
         let mut buf = [0_u8; PAGE_SIZE];
