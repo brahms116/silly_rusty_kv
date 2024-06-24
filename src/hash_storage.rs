@@ -185,24 +185,26 @@ impl HashStorage {
         Ok(())
     }
 
-    pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
-        // 1. Hash the key
+    fn hash_key_to_remainder(&self, key: &str) -> (u64, usize) {
         let mut hasher = DefaultHasher::new();
-        cmd.0.hash(&mut hasher);
+        key.hash(&mut hasher);
         let hash = hasher.finish();
-        let value_bytes = cmd.1.into_bytes();
-        let record = Record(hash, value_bytes);
-
-        // 2. Conside the last n bits, with n being the global level
         let remainder = hash % 2_u64.pow(self.global_level.into());
+        (hash, remainder.try_into().unwrap())
+    }
 
-        // 3. Look up the address of the bucket
+    pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
+        // 1. Conside the last n bits, with n being the global level
+        let (hash, remainder) = self.hash_key_to_remainder(&cmd.0);
+        let record = Record(hash, cmd.1.into_bytes());
+
+        // 2. Look up the address of the bucket
         let bucket_index = self.bucket_lookup[remainder as usize];
 
-        // 4. Load the bucket
+        // 3. Load the bucket
         let mut bucket = Bucket::read_from_file(&mut self.buckets_file, bucket_index).await;
 
-        // 5. Put command in or split the bucket
+        // 4. Put command in or split the bucket
 
         // Easy case: It fits;
         if bucket.remaining_byte_space >= record.byte_len() {
@@ -214,7 +216,7 @@ impl HashStorage {
 
         // Bucket split
         bucket.level += 1;
-        let og_remainder = remainder % 2_u64.pow(bucket.level.into());
+        let og_remainder = remainder as u64 % 2_u64.pow(bucket.level.into());
 
         // Split the bucket in half into 2 Vec<Records> one with the new bucket and one with the original bucket
         let (original, new) = bucket.records.drain(..bucket.records.len()).fold(
@@ -248,7 +250,7 @@ impl HashStorage {
         new_bucket.save_to_file(&mut self.buckets_file).await;
 
         // Local split
-        if bucket.level < self.global_level {
+        if bucket.level <= self.global_level {
             // Grab all the lookup entries which point to the existing bucket
             let mut indices = vec![];
             for i in 0..self.bucket_lookup.len() {
@@ -280,11 +282,28 @@ impl HashStorage {
     }
 
     pub async fn get(&mut self, cmd: &GetCommand) -> Result<Option<String>, ()> {
-        todo!()
+        let (hash, remainder) = self.hash_key_to_remainder(&cmd.0);
+
+        let bucket =
+            Bucket::read_from_file(&mut self.buckets_file, self.bucket_lookup[remainder]).await;
+
+        Ok(bucket
+            .records
+            .into_iter()
+            .find(|x| x.0 == hash)
+            .map(|r| String::from_utf8(r.1).unwrap()))
     }
 
     pub async fn delete(&mut self, cmd: DeleteCommand) -> Result<(), ()> {
-        todo!()
+        let (hash, remainder) = self.hash_key_to_remainder(&cmd.0);
+
+        let mut bucket =
+            Bucket::read_from_file(&mut self.buckets_file, self.bucket_lookup[remainder]).await;
+
+        bucket.records = bucket.records.into_iter().filter(|x| x.0 != hash).collect();
+        bucket.update_remaining_byte_count();
+        bucket.save_to_file(&mut self.buckets_file).await;
+        Ok(())
     }
 }
 
@@ -313,11 +332,18 @@ impl Bucket {
     fn parse_from_bytes(bytes: &[u8], bucket_number: usize) -> Result<(Self, &[u8]), ()> {
         let mut page = &bytes[0..PAGE_SIZE];
         let level = bytes[0];
-        let mut records = vec![];
 
-        while let Ok((record, rest_page)) = Record::parse_from_bytes(page) {
-            records.push(record);
-            page = rest_page;
+        let mut records = vec![];
+        loop {
+            if page.len() == 0 {
+                break;
+            }
+            if page[0] == 0 {
+                page = &page[1..]
+            } else if let Ok((record, rest_page)) = Record::parse_from_bytes(page) {
+                records.push(record);
+                page = rest_page;
+            }
         }
 
         let mut bucket = Bucket {
@@ -326,6 +352,7 @@ impl Bucket {
             records,
             remaining_byte_space: 0,
         };
+
         bucket.update_remaining_byte_count();
 
         Ok((bucket, &bytes[PAGE_SIZE..]))
