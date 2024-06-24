@@ -208,17 +208,7 @@ impl HashStorage {
             .unwrap()
     }
 
-    async fn put(&mut self, mut record: Record) -> Result<(), ()> {
-        loop {
-            if let Some(x) = self.put_(record).await? {
-                record = x;
-            } else {
-                return Ok(());
-            }
-        }
-    }
-
-    async fn put_(&mut self, record: Record) -> Result<Option<Record>, ()> {
+    async fn put(&mut self, record: Record) -> Result<(), ()> {
         // Look up the address of the bucket
         let remainder = self.hash_to_remainder(record.0);
         let bucket_index = self.bucket_lookup[remainder as usize];
@@ -228,78 +218,86 @@ impl HashStorage {
 
         // Put command in or split the bucket
 
-        // Easy case: It fits;
-        if bucket.remaining_byte_space >= record.byte_len() {
-            bucket.records.push(record);
+        loop {
+            // Easy case: It fits;
+            if bucket.remaining_byte_space >= record.byte_len() {
+                bucket.records.push(record);
+                bucket.update_remaining_byte_count();
+                bucket.save_to_file(&mut self.buckets_file).await;
+                return Ok(());
+            }
+
+            // Bucket split
+            bucket.level += 1;
+            let og_remainder = remainder as u64 % 2_u64.pow(bucket.level.into());
+
+            // Split the bucket in half into 2 Vec<Records> one with the new bucket and one with the original bucket
+            let (original, new) = bucket.records.drain(..bucket.records.len()).fold(
+                (vec![], vec![]),
+                |(mut og_, mut new_), x| {
+                    let remainder = x.0 % 2_u64.pow(bucket.level.into());
+                    if remainder > og_remainder {
+                        new_.push(x)
+                    } else {
+                        og_.push(x)
+                    }
+                    (og_, new_)
+                },
+            );
+
+            // Original bucket
+            bucket.records = original;
+
+            // New bucket
+            let mut new_bucket = Bucket {
+                level: bucket.level,
+                records: new,
+                bucket_index: self.bucket_count as usize,
+                remaining_byte_space: 0,
+            };
+
+            // Save both buckets
             bucket.update_remaining_byte_count();
+            new_bucket.update_remaining_byte_count();
             bucket.save_to_file(&mut self.buckets_file).await;
-            return Ok(None);
-        }
+            new_bucket.save_to_file(&mut self.buckets_file).await;
 
-        // Bucket split
-        bucket.level += 1;
-        let og_remainder = remainder as u64 % 2_u64.pow(bucket.level.into());
-
-        // Split the bucket in half into 2 Vec<Records> one with the new bucket and one with the original bucket
-        let (original, new) = bucket.records.drain(..bucket.records.len()).fold(
-            (vec![], vec![]),
-            |(mut og_, mut new_), x| {
-                let remainder = x.0 % 2_u64.pow(bucket.level.into());
-                if remainder > og_remainder {
-                    new_.push(x)
-                } else {
-                    og_.push(x)
+            // Local split
+            if bucket.level <= self.global_level {
+                // Grab all the lookup entries which point to the existing bucket
+                let mut indices = vec![];
+                for i in 0..self.bucket_lookup.len() {
+                    if self.bucket_lookup[i] as usize == bucket.bucket_index {
+                        indices.push(i);
+                    }
                 }
-                (og_, new_)
-            },
-        );
 
-        // Original bucket
-        bucket.records = original;
-
-        // New bucket
-        let mut new_bucket = Bucket {
-            level: bucket.level,
-            records: new,
-            bucket_index: self.bucket_count as usize,
-            remaining_byte_space: 0,
-        };
-
-        // Save both buckets
-        bucket.update_remaining_byte_count();
-        new_bucket.update_remaining_byte_count();
-        bucket.save_to_file(&mut self.buckets_file).await;
-        new_bucket.save_to_file(&mut self.buckets_file).await;
-
-        // Local split
-        if bucket.level <= self.global_level {
-            // Grab all the lookup entries which point to the existing bucket
-            let mut indices = vec![];
-            for i in 0..self.bucket_lookup.len() {
-                if self.bucket_lookup[i] as usize == bucket.bucket_index {
-                    indices.push(i);
+                // Re-adjust the lookup
+                for index in &indices {
+                    let remainder = index % 2_usize.pow(bucket.level.into());
+                    if remainder as u64 > og_remainder {
+                        self.bucket_lookup[*index] = self.bucket_count;
+                    }
                 }
+            } else {
+                // Global split
+
+                // Readjust the indices
+                self.bucket_lookup.extend(self.bucket_lookup.clone());
+                self.bucket_lookup[(self.bucket_count as u64 - 1 + og_remainder) as usize] =
+                    self.bucket_count;
+
+                self.global_level += 1;
             }
 
-            // Re-adjust the lookup
-            for index in &indices {
-                let remainder = index % 2_usize.pow(bucket.level.into());
-                if remainder as u64 > og_remainder {
-                    self.bucket_lookup[*index] = self.bucket_count;
-                }
+            // Re-assign bucket to the new bucket which the record matches against hash of the
+            // record
+            let new_remainder = record.0 % 2_u64.pow(bucket.level.into());
+
+            if new_remainder > og_remainder {
+                bucket = new_bucket;
             }
-        } else {
-            // Global split
-
-            // Readjust the indices
-            self.bucket_lookup.extend(self.bucket_lookup.clone());
-            self.bucket_lookup[(self.bucket_count as u64 - 1 + og_remainder) as usize] =
-                self.bucket_count;
-
-            self.global_level += 1;
         }
-
-        Ok(Some(record))
     }
 
     pub async fn get(&mut self, cmd: &GetCommand) -> Result<Option<String>, ()> {

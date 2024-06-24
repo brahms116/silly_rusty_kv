@@ -27,11 +27,11 @@ async fn process_lines_from_script(
 ) {
     // TODO: Need to handle the ctlrc_signal
 
-    let (mut storage, index) = setup_db();
+    let (mut storage, mut hash_storage) = setup_db().await;
     while let Some(line) = reciever.recv().await {
-        execute_user_input(&mut storage, index, Some(line)).await;
+        execute_user_input(&mut storage, &mut hash_storage, Some(line)).await;
     }
-    execute_user_input(&mut storage, index, Some("EXIT".to_string())).await;
+    execute_user_input(&mut storage, &mut hash_storage, Some("EXIT".to_string())).await;
 }
 
 async fn read_line_from_script<R: AsyncRead + Unpin>(

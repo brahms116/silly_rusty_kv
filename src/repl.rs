@@ -1,4 +1,5 @@
 use super::storage::*;
+use crate::hash_storage::HashStorage;
 use crate::{execute::execute_command, setup::setup_db};
 use tokio::io::{stdin, AsyncBufReadExt, BufReader};
 use tokio::select;
@@ -7,7 +8,7 @@ use tokio::sync::oneshot::{channel, Receiver};
 use super::command::*;
 
 pub async fn run_repl() {
-    let (mut storage, index) = setup_db();
+    let (mut storage, mut hash_storage) = setup_db().await;
 
     let (sender, mut receiver) = channel::<()>();
 
@@ -18,7 +19,7 @@ pub async fn run_repl() {
 
     println!("Welcome to Silly Rusty KV!");
     loop {
-        if inner_loop(&mut storage, index, &mut receiver).await {
+        if inner_loop(&mut storage, &mut hash_storage, &mut receiver).await {
             break;
         };
     }
@@ -28,7 +29,7 @@ pub async fn run_repl() {
 
 pub async fn execute_user_input(
     storage: &mut StorageEngine,
-    index: (),
+    hash_storage: &mut HashStorage,
     input: Option<String>,
 ) -> bool {
     if let None = input {
@@ -43,23 +44,27 @@ pub async fn execute_user_input(
         let should_quit = cmd == Command::Exit;
         // execute command
         let out_stream = ();
-        execute_command(cmd.clone(), index, storage, out_stream).await;
+        execute_command(cmd.clone(), storage, hash_storage, out_stream).await;
         return should_quit;
     }
     return false;
 }
 
-async fn inner_loop(storage: &mut StorageEngine, index: (), receiver: &mut Receiver<()>) -> bool {
+async fn inner_loop(
+    storage: &mut StorageEngine,
+    hash_storage: &mut HashStorage,
+    receiver: &mut Receiver<()>,
+) -> bool {
     let mut reader = BufReader::new(stdin()).lines();
 
     select! {
         _ = receiver => {
             // TODO: Handle reciever error
             println!("Received ctrl-c");
-            return execute_user_input(storage, index, Some("EXIT".into())).await;
+            return execute_user_input(storage, hash_storage, Some("EXIT".into())).await;
         }
         input = reader.next_line() => {
-            return execute_user_input(storage, index, input.unwrap()).await;
+            return execute_user_input(storage, hash_storage, input.unwrap()).await;
         }
     }
 }
