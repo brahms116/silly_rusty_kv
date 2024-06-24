@@ -9,6 +9,12 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::command::*;
 
+fn hash_string_key(key: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    key.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Given an length of the directory addresses derive the
 /// global level
 ///
@@ -171,7 +177,10 @@ impl HashStorage {
 
     pub async fn handle_cmd(&mut self, cmd: Command) -> Result<(), ()> {
         match cmd {
-            Command::Put(cmd) => self.put(cmd).await.unwrap(),
+            Command::Put(cmd) => self
+                .put(Record(hash_string_key(&cmd.0), cmd.1.into_bytes()))
+                .await
+                .unwrap(),
             Command::Delete(cmd) => self.delete(cmd).await.unwrap(),
             Command::Get(cmd) => {
                 if let Some(value) = self.get(&cmd).await.unwrap() {
@@ -193,25 +202,38 @@ impl HashStorage {
         (hash, remainder.try_into().unwrap())
     }
 
-    pub async fn put(&mut self, cmd: PutCommand) -> Result<(), ()> {
-        // 1. Conside the last n bits, with n being the global level
-        let (hash, remainder) = self.hash_key_to_remainder(&cmd.0);
-        let record = Record(hash, cmd.1.into_bytes());
+    fn hash_to_remainder(&self, hash: u64) -> usize {
+        (hash % 2_u64.pow(self.global_level.into()))
+            .try_into()
+            .unwrap()
+    }
 
-        // 2. Look up the address of the bucket
+    async fn put(&mut self, mut record: Record) -> Result<(), ()> {
+        loop {
+            if let Some(x) = self.put_(record).await? {
+                record = x;
+            } else {
+                return Ok(());
+            }
+        }
+    }
+
+    async fn put_(&mut self, record: Record) -> Result<Option<Record>, ()> {
+        // Look up the address of the bucket
+        let remainder = self.hash_to_remainder(record.0);
         let bucket_index = self.bucket_lookup[remainder as usize];
 
-        // 3. Load the bucket
+        // Load the bucket
         let mut bucket = Bucket::read_from_file(&mut self.buckets_file, bucket_index).await;
 
-        // 4. Put command in or split the bucket
+        // Put command in or split the bucket
 
         // Easy case: It fits;
         if bucket.remaining_byte_space >= record.byte_len() {
             bucket.records.push(record);
             bucket.update_remaining_byte_count();
             bucket.save_to_file(&mut self.buckets_file).await;
-            return Ok(());
+            return Ok(None);
         }
 
         // Bucket split
@@ -234,7 +256,6 @@ impl HashStorage {
 
         // Original bucket
         bucket.records = original;
-        bucket.update_remaining_byte_count();
 
         // New bucket
         let mut new_bucket = Bucket {
@@ -243,9 +264,10 @@ impl HashStorage {
             bucket_index: self.bucket_count as usize,
             remaining_byte_space: 0,
         };
-        new_bucket.update_remaining_byte_count();
 
         // Save both buckets
+        bucket.update_remaining_byte_count();
+        new_bucket.update_remaining_byte_count();
         bucket.save_to_file(&mut self.buckets_file).await;
         new_bucket.save_to_file(&mut self.buckets_file).await;
 
@@ -266,19 +288,18 @@ impl HashStorage {
                     self.bucket_lookup[*index] = self.bucket_count;
                 }
             }
+        } else {
+            // Global split
 
-            return Ok(());
+            // Readjust the indices
+            self.bucket_lookup.extend(self.bucket_lookup.clone());
+            self.bucket_lookup[(self.bucket_count as u64 - 1 + og_remainder) as usize] =
+                self.bucket_count;
+
+            self.global_level += 1;
         }
 
-        // Global split
-
-        // Readjust the indices
-        self.bucket_lookup.extend(self.bucket_lookup.clone());
-        self.bucket_lookup[(self.bucket_count as u64 - 1 + og_remainder) as usize] =
-            self.bucket_count;
-
-        self.global_level += 1;
-        Ok(())
+        Ok(Some(record))
     }
 
     pub async fn get(&mut self, cmd: &GetCommand) -> Result<Option<String>, ()> {

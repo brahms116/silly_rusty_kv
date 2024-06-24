@@ -2,6 +2,9 @@
 #![allow(unused_variables)]
 
 
+#[cfg(test)]
+mod test;
+
 mod consts;
 mod command;
 mod repl;
