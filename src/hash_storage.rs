@@ -31,6 +31,15 @@ fn addr_count_to_global_level(mut length: usize) -> u8 {
 
 async fn load_bucket_file(file: &mut File) -> u32 {
     if file.metadata().await.unwrap().len() == 0 {
+        // setup the file by pushing an empty bucket to it
+        let bucket = Bucket {
+            records: vec![],
+            level: 0,
+            bucket_index: 0,
+            // Doesn't matter
+            remaining_byte_space: 0,
+        };
+        bucket.save_to_file(file).await;
         return 1;
     }
     file.seek(SeekFrom::Start(0)).await.unwrap();
@@ -448,5 +457,21 @@ impl Record {
         let len = u16::from_le_bytes(bytes[9..11].try_into().unwrap());
         let value = bytes[11..(11 + len) as usize].to_owned();
         Ok((Record(hash, value), &bytes[(11 + len as usize)..]))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    async fn get_engine(test_prefix: String) -> HashStorage {
+        let test_data_prefx = String::from("./test_data");
+        let mut data_file = test_data_prefx.clone();
+        data_file.push_str(&test_prefix);
+        data_file.push_str("_data.db");
+        let mut dir_file = test_data_prefx.clone();
+        dir_file.push_str(&test_prefix);
+        dir_file.push_str("_dir.db");
+        HashStorage::new(&dir_file, &data_file).await
     }
 }
