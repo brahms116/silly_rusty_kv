@@ -184,7 +184,7 @@ impl HashStorage {
         }
     }
 
-    pub async fn handle_cmd(&mut self, cmd: Command) -> Result<(), ()> {
+    pub async fn handle_cmd(&mut self, cmd: Command) -> Result<Option<String>, ()> {
         match cmd {
             Command::Put(cmd) => self
                 .put(Record(hash_string_key(&cmd.0), cmd.1.into_bytes()))
@@ -194,13 +194,14 @@ impl HashStorage {
             Command::Get(cmd) => {
                 if let Some(value) = self.get(&cmd).await.unwrap() {
                     println!("{}", value);
+                    return Ok(Some(value));
                 } else {
                     println!("Key not found");
                 }
             }
             Command::Exit => {}
         }
-        Ok(())
+        Ok(None)
     }
 
     fn hash_key_to_remainder(&self, key: &str) -> (u64, usize) {
@@ -419,6 +420,8 @@ impl Bucket {
             }
             ptr = ptr + length;
         }
+
+        file.write_all(&buf).await.unwrap();
     }
 }
 
@@ -463,15 +466,48 @@ impl Record {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::test::*;
 
-    async fn get_engine(test_prefix: String) -> HashStorage {
+    async fn get_engine(test_prefix: &str) -> HashStorage {
         let test_data_prefx = String::from("./test_data");
-        let mut data_file = test_data_prefx.clone();
-        data_file.push_str(&test_prefix);
-        data_file.push_str("_data.db");
-        let mut dir_file = test_data_prefx.clone();
-        dir_file.push_str(&test_prefix);
-        dir_file.push_str("_dir.db");
-        HashStorage::new(&dir_file, &data_file).await
+        let data_path = format!("{}/{}_data.db", test_data_prefx, test_prefix);
+        let dir_path = format!("{}/{}_dir.db", test_data_prefx, test_prefix);
+        reset_or_create_file(&data_path);
+        reset_or_create_file(&dir_path);
+        HashStorage::new(&dir_path, &data_path).await
+    }
+
+    #[tokio::test]
+    async fn smoke() {
+        let mut engine = get_engine("hash_storage_smoke").await;
+        let cmd = PutCommand("MY_KEY".into(), "MY_VALUE".into());
+        let get_cmd = GetCommand("MY_KEY".into());
+
+        engine.handle_cmd(cmd.clone().into()).await.unwrap();
+        let retrieved = engine
+            .handle_cmd(get_cmd.clone().into())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(retrieved, "MY_VALUE");
+
+        let cmd = PutCommand("MY_KEY".into(), "MY_VALUE2".into());
+        engine.handle_cmd(cmd.clone().into()).await.unwrap();
+        let retrieved = engine
+            .handle_cmd(get_cmd.clone().into())
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(retrieved, "MY_VALUE2");
+
+        engine
+            .handle_cmd(DeleteCommand("MY_KEY".into()).into())
+            .await
+            .unwrap();
+
+        let retrieved = engine.handle_cmd(get_cmd.clone().into()).await.unwrap();
+        assert_eq!(retrieved, None);
     }
 }

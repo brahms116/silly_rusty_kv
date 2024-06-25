@@ -1,2 +1,5 @@
 /target
 data.db
+hash_data.db
+hash_dir.db
+/test_data/**
