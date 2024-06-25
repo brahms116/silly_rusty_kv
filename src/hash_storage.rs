@@ -416,7 +416,7 @@ impl Bucket {
             let bytes = record.into_bytes();
             let length = bytes.len();
             for i in ptr..ptr + length {
-                buf[i] = bytes[i];
+                buf[i] = bytes[i - ptr];
             }
             ptr = ptr + length;
         }
