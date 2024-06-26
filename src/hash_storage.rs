@@ -229,8 +229,18 @@ impl HashStorage {
         // Put command in or split the bucket
 
         loop {
-            // Easy case: It fits;
-            if bucket.remaining_byte_space >= record.byte_len() {
+            let potential_exist = bucket.records.iter_mut().find(|x| x.0 == record.0);
+            // Easy cases, they fit
+            if let Some(exist) = potential_exist {
+                if exist.1.len() >= record.1.len()
+                    || record.1.len() - exist.1.len() <= bucket.remaining_byte_space
+                {
+                    exist.1 = record.1;
+                    bucket.update_remaining_byte_count();
+                    bucket.save_to_file(&mut self.buckets_file).await;
+                    return Ok(());
+                }
+            } else if bucket.remaining_byte_space >= record.byte_len() {
                 bucket.records.push(record);
                 bucket.update_remaining_byte_count();
                 bucket.save_to_file(&mut self.buckets_file).await;
