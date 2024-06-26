@@ -229,13 +229,14 @@ impl HashStorage {
         // Put command in or split the bucket
 
         loop {
-            let potential_exist = bucket.records.iter_mut().find(|x| x.0 == record.0);
             // Easy cases, they fit
-            if let Some(exist) = potential_exist {
-                if exist.1.len() >= record.1.len()
-                    || record.1.len() - exist.1.len() <= bucket.remaining_byte_space
+            if let Some(existing_record) = bucket.records.iter_mut().find(|x| x.0 == record.0) {
+                // Check the difference between the existing record and the new record to see if
+                // the bucket can accomodate to the difference in size
+                if existing_record.1.len() >= record.1.len()
+                    || record.1.len() - existing_record.1.len() <= bucket.remaining_byte_space
                 {
-                    exist.1 = record.1;
+                    existing_record.1 = record.1;
                     bucket.update_remaining_byte_count();
                     bucket.save_to_file(&mut self.buckets_file).await;
                     return Ok(());
@@ -487,6 +488,12 @@ mod test {
         HashStorage::new(&dir_path, &data_path).await
     }
 
+    fn record_from_size(hash: u64, byte: u8, size: usize) -> Record {
+        let value_len = size - HASH_RECORD_HEADER - HASH_LENGTH - HASH_VALUE_HEADER;
+        let value = vec![byte; value_len];
+        Record(hash, value)
+    }
+
     #[tokio::test]
     async fn smoke() {
         let mut engine = get_engine("hash_storage_smoke").await;
@@ -519,5 +526,95 @@ mod test {
 
         let retrieved = engine.handle_cmd(get_cmd.clone().into()).await.unwrap();
         assert_eq!(retrieved, None);
+    }
+
+    /// Simulate a scenario as the following:
+    ///
+    /// Bucket index 0 has a a record of a hash ending with 1010 with 4000 bytes in value.
+    /// Bucket index 0 has is at a local level of 1.
+    /// The global level is at 3.
+    /// We are going to insert a record with a hash of 1110 with 4000 bytes of value, forcing
+    /// it to recursively local split twice.
+    ///
+    /// 000 -> 0 -> Current record
+    /// 001 -> 1
+    /// 010 -> 0
+    /// 011 -> 2
+    /// 100 -> 0
+    /// 101 -> 3
+    /// 110 -> 0
+    /// 111 -> 4
+    ///
+    ///
+    /// We should expect the following after the insert
+    ///
+    /// 000 -> 0
+    /// 001 -> 1
+    /// 010 -> 5 -> Old record
+    /// 011 -> 2
+    /// 100 -> 6
+    /// 101 -> 3
+    /// 110 -> 7 -> New record
+    /// 111 -> 4
+    ///
+    #[tokio::test]
+    async fn local_split() {
+        let mut engine = get_engine("hash_storage_local_split").await;
+        let old_record = record_from_size(0b_1010, 1, 4000);
+        let new_record = record_from_size(0b_1110, 2, 4000);
+
+        let mut buckets = vec![
+            Bucket {
+                bucket_index: 0,
+                remaining_byte_space: 0,
+                level: 1,
+                records: vec![old_record],
+            },
+            Bucket {
+                level: 3,
+                remaining_byte_space: 0,
+                records: vec![],
+                bucket_index: 1,
+            },
+            Bucket {
+                level: 3,
+                remaining_byte_space: 0,
+                records: vec![],
+                bucket_index: 2,
+            },
+            Bucket {
+                level: 3,
+                remaining_byte_space: 0,
+                records: vec![],
+                bucket_index: 3,
+            },
+            Bucket {
+                level: 3,
+                remaining_byte_space: 0,
+                records: vec![],
+                bucket_index: 4,
+            },
+        ];
+        for bucket in &mut buckets {
+            bucket.update_remaining_byte_count();
+            bucket.save_to_file(&mut engine.buckets_file).await;
+        }
+
+        engine.bucket_count = 5;
+        engine.global_level = 3;
+
+        engine.bucket_lookup = vec![0, 1, 0, 2, 0, 3, 0, 4];
+
+        engine.put(new_record).await.unwrap();
+
+        assert_eq!(engine.global_level, 3);
+        assert_eq!(engine.bucket_count, 8);
+        assert_eq!(engine.bucket_lookup, vec![0, 1, 5, 2, 6, 3, 7, 4]);
+
+        let old_record_bucket = Bucket::read_from_file(&mut engine.buckets_file, 5).await;
+        old_record_bucket.records.iter().find(|x| x.0 == 0b_1010).unwrap();
+
+        let new_record_bucket = Bucket::read_from_file(&mut engine.buckets_file, 7).await;
+        new_record_bucket.records.iter().find(|x| x.0 == 0b_1110).unwrap();
     }
 }
