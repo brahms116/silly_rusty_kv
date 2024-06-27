@@ -225,8 +225,7 @@ impl HashStorage {
 
     async fn put(&mut self, record: Record) -> Result<(), ()> {
         // Look up the address of the bucket
-        let remainder = self.hash_to_remainder(record.0);
-        let bucket_index = self.bucket_lookup[remainder as usize];
+        let bucket_index = self.bucket_lookup[self.hash_to_remainder(record.0)];
 
         // Load the bucket
         let mut bucket = Bucket::read_from_file(&mut self.buckets_file, bucket_index).await;
@@ -255,8 +254,11 @@ impl HashStorage {
 
             // Bucket split
 
-            // This is the original remainder for the bucket before the split
-            let og_bucket_remainder = remainder as u64 % 2_u64.pow(bucket.level.into());
+            // This is the original remainder for the bucket before the split, we have to call
+            // self.hash_to_remainder again as the global level may have changed between the
+            // iterations of the loop due to a global split
+            let og_bucket_remainder =
+                self.hash_to_remainder(record.0) as u64 % 2_u64.pow(bucket.level.into());
 
             bucket.level += 1;
 
@@ -316,9 +318,10 @@ impl HashStorage {
                 // Global split
 
                 // Readjust the indices
+                let old_len = self.bucket_lookup.len();
                 self.bucket_lookup.extend(self.bucket_lookup.clone());
-                self.bucket_lookup[(new_bucket_index as u64 - 1 + og_bucket_remainder) as usize] =
-                    self.bucket_count;
+                self.bucket_lookup[old_len + og_bucket_remainder as usize] =
+                    new_bucket_index as u32;
 
                 self.global_level += 1;
             }
