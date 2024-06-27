@@ -209,6 +209,11 @@ impl HashStorage {
         Ok(None)
     }
 
+    async fn exit(&mut self) {
+        save_directory(&self.bucket_lookup, &mut self.directory_file).await;
+        save_bucket_file(self.bucket_count, &mut self.buckets_file).await;
+    }
+
     fn hash_key_to_remainder(&self, key: &str) -> (u64, usize) {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
