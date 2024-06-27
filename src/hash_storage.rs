@@ -192,7 +192,12 @@ impl HashStorage {
                 .unwrap(),
             Command::Delete(cmd) => self.delete(cmd).await.unwrap(),
             Command::Get(cmd) => {
-                if let Some(value) = self.get(&cmd).await.unwrap() {
+                if let Some(value) = self
+                    .get(hash_string_key(&cmd.0))
+                    .await
+                    .unwrap()
+                    .map(|x| String::from_utf8(x).unwrap())
+                {
                     println!("{}", value);
                     return Ok(Some(value));
                 } else {
@@ -249,15 +254,18 @@ impl HashStorage {
             }
 
             // Bucket split
+
+            // This is the original remainder for the bucket before the split
+            let og_bucket_remainder = remainder as u64 % 2_u64.pow(bucket.level.into());
+
             bucket.level += 1;
-            let og_remainder = remainder as u64 % 2_u64.pow(bucket.level.into());
 
             // Split the bucket in half into 2 Vec<Records> one with the new bucket and one with the original bucket
             let (original, new) = bucket.records.drain(..bucket.records.len()).fold(
                 (vec![], vec![]),
                 |(mut og_, mut new_), x| {
                     let remainder = x.0 % 2_u64.pow(bucket.level.into());
-                    if remainder > og_remainder {
+                    if remainder > og_bucket_remainder {
                         new_.push(x)
                     } else {
                         og_.push(x)
@@ -269,11 +277,13 @@ impl HashStorage {
             // Original bucket
             bucket.records = original;
 
+            let new_bucket_index = self.bucket_count as usize;
+
             // New bucket
             let mut new_bucket = Bucket {
                 level: bucket.level,
                 records: new,
-                bucket_index: self.bucket_count as usize,
+                bucket_index: new_bucket_index,
                 remaining_byte_space: 0,
             };
 
@@ -282,6 +292,8 @@ impl HashStorage {
             new_bucket.update_remaining_byte_count();
             bucket.save_to_file(&mut self.buckets_file).await;
             new_bucket.save_to_file(&mut self.buckets_file).await;
+
+            self.bucket_count += 1;
 
             // Local split
             if bucket.level <= self.global_level {
@@ -296,8 +308,8 @@ impl HashStorage {
                 // Re-adjust the lookup
                 for index in &indices {
                     let remainder = index % 2_usize.pow(bucket.level.into());
-                    if remainder as u64 > og_remainder {
-                        self.bucket_lookup[*index] = self.bucket_count;
+                    if remainder as u64 > og_bucket_remainder {
+                        self.bucket_lookup[*index] = new_bucket_index as u32;
                     }
                 }
             } else {
@@ -305,25 +317,23 @@ impl HashStorage {
 
                 // Readjust the indices
                 self.bucket_lookup.extend(self.bucket_lookup.clone());
-                self.bucket_lookup[(self.bucket_count as u64 - 1 + og_remainder) as usize] =
+                self.bucket_lookup[(new_bucket_index as u64 - 1 + og_bucket_remainder) as usize] =
                     self.bucket_count;
 
                 self.global_level += 1;
             }
 
-            // Re-assign bucket to the new bucket which the record matches against hash of the
-            // record
+            // Re-assign "bucket" to the new bucket which the record matches against hash of the
+            // record. This is because it might need to split again
             let new_remainder = record.0 % 2_u64.pow(bucket.level.into());
-
-            if new_remainder > og_remainder {
+            if new_remainder > og_bucket_remainder {
                 bucket = new_bucket;
             }
         }
     }
 
-    pub async fn get(&mut self, cmd: &GetCommand) -> Result<Option<String>, ()> {
-        let (hash, remainder) = self.hash_key_to_remainder(&cmd.0);
-
+    async fn get(&mut self, hash: u64) -> Result<Option<Vec<u8>>, ()> {
+        let remainder = self.hash_to_remainder(hash);
         let bucket =
             Bucket::read_from_file(&mut self.buckets_file, self.bucket_lookup[remainder]).await;
 
@@ -331,7 +341,7 @@ impl HashStorage {
             .records
             .into_iter()
             .find(|x| x.0 == hash)
-            .map(|r| String::from_utf8(r.1).unwrap()))
+            .map(|r| r.1))
     }
 
     pub async fn delete(&mut self, cmd: DeleteCommand) -> Result<(), ()> {
@@ -371,7 +381,8 @@ pub struct Bucket {
 impl Bucket {
     fn parse_from_bytes(bytes: &[u8], bucket_number: usize) -> Result<(Self, &[u8]), ()> {
         let mut page = &bytes[0..PAGE_SIZE];
-        let level = bytes[0];
+        let level = page[0];
+        page = &page[1..];
 
         let mut records = vec![];
         loop {
@@ -446,7 +457,7 @@ impl Bucket {
 /// - The next 8 bytes are the hash
 /// - The next 2 bytes is the length of the value
 /// - Followed by the value in bytes
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Record(u64, Vec<u8>);
 
 impl Record {
@@ -552,15 +563,16 @@ mod test {
     /// 001 -> 1
     /// 010 -> 5 -> Old record
     /// 011 -> 2
-    /// 100 -> 6
+    /// 100 -> 0
     /// 101 -> 3
-    /// 110 -> 7 -> New record
+    /// 110 -> 6 -> New record
     /// 111 -> 4
     ///
     #[tokio::test]
     async fn local_split() {
         let mut engine = get_engine("hash_storage_local_split").await;
         let old_record = record_from_size(0b_1010, 1, 4000);
+
         let new_record = record_from_size(0b_1110, 2, 4000);
 
         let mut buckets = vec![
@@ -608,13 +620,102 @@ mod test {
         engine.put(new_record).await.unwrap();
 
         assert_eq!(engine.global_level, 3);
-        assert_eq!(engine.bucket_count, 8);
-        assert_eq!(engine.bucket_lookup, vec![0, 1, 5, 2, 6, 3, 7, 4]);
+        assert_eq!(engine.bucket_count, 7);
+        assert_eq!(engine.bucket_lookup, vec![0, 1, 5, 2, 0, 3, 6, 4]);
 
         let old_record_bucket = Bucket::read_from_file(&mut engine.buckets_file, 5).await;
-        old_record_bucket.records.iter().find(|x| x.0 == 0b_1010).unwrap();
+        old_record_bucket
+            .records
+            .iter()
+            .find(|x| x.0 == 0b_1010)
+            .unwrap();
+        assert_eq!(old_record_bucket.level, 3);
 
-        let new_record_bucket = Bucket::read_from_file(&mut engine.buckets_file, 7).await;
-        new_record_bucket.records.iter().find(|x| x.0 == 0b_1110).unwrap();
+        let new_record_bucket = Bucket::read_from_file(&mut engine.buckets_file, 6).await;
+        new_record_bucket
+            .records
+            .iter()
+            .find(|x| x.0 == 0b_1110)
+            .unwrap();
+        assert_eq!(new_record_bucket.level, 3);
+    }
+
+    /// Simulate a similar scenario as the local split
+    ///
+    /// We will use 2 records, both 4000 bytes in length. Same as the local split test
+    /// we will have record 1 with a hash of 1010 and the second with 1110.
+    ///
+    /// But instead of having the global level at 3, we have a global level of 1. So inserting both
+    /// record number 2 should cause a global split twice.
+    ///
+    /// 0 -> 0 -> Current record
+    /// 1 -> 1 -> Current record
+    ///
+    ///
+    /// We should expect the following after the insert
+    /// 00 -> 0
+    /// 01 -> 1
+    /// 10 -> 2
+    /// 11 -> 1
+    ///
+    /// 000 -> 0
+    /// 001 -> 1
+    /// 010 -> 2 -> Old Record
+    /// 011 -> 1
+    /// 100 -> 0
+    /// 101 -> 1
+    /// 110 -> 3 -> New Record
+    /// 111 -> 1
+    ///
+    #[tokio::test]
+    async fn global_split() {
+        let mut engine = get_engine("hash_storage_global_split").await;
+        let old_record = record_from_size(0b_1010, 1, 4000);
+
+        let new_record = record_from_size(0b_1110, 2, 4000);
+
+        let mut buckets = vec![
+            Bucket {
+                bucket_index: 0,
+                remaining_byte_space: 0,
+                level: 1,
+                records: vec![old_record],
+            },
+            Bucket {
+                level: 1,
+                remaining_byte_space: 0,
+                records: vec![],
+                bucket_index: 1,
+            },
+        ];
+        for bucket in &mut buckets {
+            bucket.update_remaining_byte_count();
+            bucket.save_to_file(&mut engine.buckets_file).await;
+        }
+        engine.bucket_count = 2;
+        engine.global_level = 1;
+        engine.bucket_lookup = vec![0, 1];
+
+        engine.put(new_record).await.unwrap();
+
+        assert_eq!(engine.global_level, 3);
+        assert_eq!(engine.bucket_count, 4);
+        assert_eq!(engine.bucket_lookup, vec![0, 1, 2, 1, 0, 1, 3, 1]);
+
+        let old_record_bucket = Bucket::read_from_file(&mut engine.buckets_file, 2).await;
+        old_record_bucket
+            .records
+            .iter()
+            .find(|x| x.0 == 0b_1010)
+            .unwrap();
+        assert_eq!(old_record_bucket.level, 3);
+
+        let new_record_bucket = Bucket::read_from_file(&mut engine.buckets_file, 3).await;
+        new_record_bucket
+            .records
+            .iter()
+            .find(|x| x.0 == 0b_1110)
+            .unwrap();
+        assert_eq!(new_record_bucket.level, 3);
     }
 }
