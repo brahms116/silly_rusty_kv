@@ -236,10 +236,8 @@ impl HashStorage {
         // Look up the address of the bucket
         let bucket_index = self.bucket_lookup[self.hash_to_remainder(record.0)];
 
-
         // Load the bucket
         let mut bucket = Bucket::read_from_file(&mut self.buckets_file, bucket_index).await;
-
 
         // Put command in or split the bucket
 
@@ -380,6 +378,7 @@ impl HashStorage {
 /// - First byte is the level
 /// - Rest are records
 ///
+#[derive(PartialEq, Debug, Clone)]
 pub struct Bucket {
     /// The nth bucket in the bucket file, 0 indexed
     bucket_index: usize,
@@ -402,15 +401,17 @@ impl Bucket {
 
         let mut records = vec![];
         loop {
+            println!("still stuck?");
             if page.len() == 0 {
                 break;
             }
             if page[0] == 0 {
                 page = &page[1..]
+            } else {
+                let (record, rest_page) = Record::parse_from_bytes(page).unwrap();
+                records.push(record);
+                page = rest_page;
             }
-            let (record, rest_page) = Record::parse_from_bytes(page).unwrap();
-            records.push(record);
-            page = rest_page;
         }
 
         let mut bucket = Bucket {
@@ -463,6 +464,33 @@ impl Bucket {
     }
 }
 
+#[cfg(test)]
+mod test_bucket {
+    use super::*;
+    use crate::test::*;
+
+    #[tokio::test]
+    async fn to_and_from_file() {
+        let mut bucket = Bucket {
+            bucket_index: 0,
+            level: 1,
+            remaining_byte_space: 0,
+            records: vec![
+                Record(0b_1110, vec![25, 236, 36, 46]),
+                Record(0b_0010, vec![26, 236, 36, 46]),
+                Record(0b_0110, vec![27, 236, 36, 46]),
+            ],
+        };
+        bucket.update_remaining_byte_count();
+
+        let mut file = reset_or_create_file("test_bucket_to_and_from_file").into();
+        bucket.save_to_file(&mut file).await;
+
+        let bucket_ = Bucket::read_from_file(&mut file, 0).await;
+        assert_eq!(bucket_, bucket);
+    }
+}
+
 /// The record stored in the database
 ///
 /// Made of the hash the u64, and the binary data
@@ -473,7 +501,7 @@ impl Bucket {
 /// - The next 8 bytes are the hash
 /// - The next 2 bytes is the length of the value
 /// - Followed by the value in bytes
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Record(u64, Vec<u8>);
 
 impl Record {
@@ -502,7 +530,21 @@ impl Record {
 }
 
 #[cfg(test)]
-mod test {
+mod test_record {
+    use super::*;
+
+    #[test]
+    fn into_and_from_bytes() {
+        let r = Record(0b_1110, vec![25, 236, 36, 46]);
+        let bytes = r.clone().into_bytes();
+        let (r_, bs) = Record::parse_from_bytes(&bytes).unwrap();
+        assert_eq!(r_, r);
+        assert_eq!(bs.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod test_hash_storage {
     use super::*;
     use crate::test::*;
 
