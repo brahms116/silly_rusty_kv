@@ -241,7 +241,7 @@ impl HashStorage {
 
         // Put command in or split the bucket
 
-        self.debug();
+        // self.debug();
 
         loop {
             // Easy cases, they fit
