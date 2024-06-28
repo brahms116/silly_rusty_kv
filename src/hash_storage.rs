@@ -22,7 +22,7 @@ fn hash_string_key(key: &str) -> u64 {
 /// the position of most significant bit
 fn addr_count_to_global_level(mut length: usize) -> u8 {
     let mut result: u8 = 0;
-    while length > 0 {
+    while length > 1 {
         length = length >> 1;
         result += 1;
     }
@@ -61,18 +61,14 @@ async fn load_directory(file: &mut File) -> (Vec<u32>, u8) {
     file.seek(SeekFrom::Start(0)).await.unwrap();
     let global_level = file.read_u8().await.unwrap();
     let addr_count = (2 as usize).pow(global_level.into());
-    let mut buf = vec![0; addr_count * 8];
+    let mut buf = vec![0; addr_count * 4];
     file.read_exact(&mut buf).await.unwrap();
 
     let mut result = vec![0; addr_count];
     for i in 0..addr_count {
-        let start = 8 * i;
-        result.push(u32::from_le_bytes([
-            buf[start],
-            buf[start + 1],
-            buf[start + 2],
-            buf[start + 3],
-        ]));
+        let start = 4 * i;
+        result[i] =
+            u32::from_le_bytes([buf[start], buf[start + 1], buf[start + 2], buf[start + 3]]);
     }
     return (result, global_level);
 }
@@ -82,16 +78,15 @@ async fn save_directory(vec: &Vec<u32>, file: &mut File) {
     let global_level = addr_count_to_global_level(addr_count);
     file.seek(SeekFrom::Start(0)).await.unwrap();
     file.write_u8(global_level).await.unwrap();
-    let mut buf = vec![0; vec.len() * 8];
+    let mut buf = vec![0; vec.len() * 4];
     for i in 0..addr_count {
         let bytes = vec[i].to_le_bytes();
-        let start = 8 * i;
+        let start = 4 * i;
         buf[start] = bytes[0];
         buf[start + 1] = bytes[1];
         buf[start + 2] = bytes[2];
         buf[start + 3] = bytes[3];
     }
-
     file.write_all(&buf).await.unwrap();
 }
 
@@ -204,7 +199,7 @@ impl HashStorage {
                     println!("Key not found");
                 }
             }
-            Command::Exit => {}
+            Command::Exit => self.exit().await,
         }
         Ok(None)
     }
@@ -212,6 +207,8 @@ impl HashStorage {
     async fn exit(&mut self) {
         save_directory(&self.bucket_lookup, &mut self.directory_file).await;
         save_bucket_file(self.bucket_count, &mut self.buckets_file).await;
+        self.directory_file.sync_all().await.unwrap();
+        self.buckets_file.sync_all().await.unwrap();
     }
 
     fn hash_key_to_remainder(&self, key: &str) -> (u64, usize) {
@@ -228,14 +225,25 @@ impl HashStorage {
             .unwrap()
     }
 
+    fn debug(&self) {
+        println!(
+            "Bucket count: {}, Bucket_lookup: {:?}, Global lvl: {}",
+            self.bucket_count, self.bucket_lookup, self.global_level
+        );
+    }
+
     async fn put(&mut self, record: Record) -> Result<(), ()> {
         // Look up the address of the bucket
         let bucket_index = self.bucket_lookup[self.hash_to_remainder(record.0)];
 
+
         // Load the bucket
         let mut bucket = Bucket::read_from_file(&mut self.buckets_file, bucket_index).await;
 
+
         // Put command in or split the bucket
+
+        self.debug();
 
         loop {
             // Easy cases, they fit
@@ -399,10 +407,10 @@ impl Bucket {
             }
             if page[0] == 0 {
                 page = &page[1..]
-            } else if let Ok((record, rest_page)) = Record::parse_from_bytes(page) {
-                records.push(record);
-                page = rest_page;
             }
+            let (record, rest_page) = Record::parse_from_bytes(page).unwrap();
+            records.push(record);
+            page = rest_page;
         }
 
         let mut bucket = Bucket {
@@ -504,6 +512,13 @@ mod test {
         let dir_path = format!("{}/{}_dir.db", test_data_prefx, test_prefix);
         reset_or_create_file(&data_path);
         reset_or_create_file(&dir_path);
+        HashStorage::new(&dir_path, &data_path).await
+    }
+
+    async fn get_engine_without_reset(test_prefix: &str) -> HashStorage {
+        let test_data_prefx = String::from("./test_data");
+        let data_path = format!("{}/{}_data.db", test_data_prefx, test_prefix);
+        let dir_path = format!("{}/{}_dir.db", test_data_prefx, test_prefix);
         HashStorage::new(&dir_path, &data_path).await
     }
 
@@ -725,5 +740,22 @@ mod test {
             .find(|x| x.0 == 0b_1110)
             .unwrap();
         assert_eq!(new_record_bucket.level, 3);
+    }
+
+    #[tokio::test]
+    async fn exit_save_load() {
+        let mut engine = get_engine("hash_storage_exit_save_load").await;
+
+        engine.bucket_lookup = vec![1, 5, 6, 7, 2, 4, 7, 8];
+        engine.global_level = 3;
+        engine.bucket_count = 8;
+
+        engine.handle_cmd(Command::Exit).await.unwrap();
+
+        let engine_reloaded = get_engine_without_reset("hash_storage_exit_save_load").await;
+
+        assert_eq!(engine_reloaded.bucket_lookup, engine.bucket_lookup);
+        assert_eq!(engine_reloaded.global_level, engine.global_level);
+        assert_eq!(engine_reloaded.bucket_count, engine.bucket_count);
     }
 }
