@@ -401,7 +401,6 @@ impl Bucket {
 
         let mut records = vec![];
         loop {
-            println!("still stuck?");
             if page.len() == 0 {
                 break;
             }
@@ -433,7 +432,7 @@ impl Bucket {
 
     async fn read_from_file(file: &mut File, bucket_index: u32) -> Self {
         file.seek(SeekFrom::Start(
-            (1 + (bucket_index as usize) * PAGE_SIZE) as u64,
+            (4 + (bucket_index as usize) * PAGE_SIZE) as u64,
         ))
         .await
         .unwrap();
@@ -444,7 +443,7 @@ impl Bucket {
     }
 
     async fn save_to_file(&self, file: &mut File) {
-        file.seek(SeekFrom::Start((1 + self.bucket_index * PAGE_SIZE) as u64))
+        file.seek(SeekFrom::Start((4 + self.bucket_index * PAGE_SIZE) as u64))
             .await
             .unwrap();
         let mut buf = [0_u8; PAGE_SIZE];
@@ -483,7 +482,7 @@ mod test_bucket {
         };
         bucket.update_remaining_byte_count();
 
-        let mut file = reset_or_create_file("test_bucket_to_and_from_file").into();
+        let mut file = reset_or_create_file("./test_data/test_bucket_to_and_from_file").into();
         bucket.save_to_file(&mut file).await;
 
         let bucket_ = Bucket::read_from_file(&mut file, 0).await;
