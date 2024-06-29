@@ -70,7 +70,7 @@ async fn save_bucket_file(bucket_count: BucketCount, file: &mut File) {
     return file.write_all(&buf).await.unwrap();
 }
 
-async fn load_directory(file: &mut File) -> (Vec<u32>, u8) {
+async fn load_directory(file: &mut File) -> (Vec<u32>, GlobalLevel) {
     // Return if the file is empty
     if file.metadata().await.unwrap().len() == 0 {
         return (vec![0], 0);
@@ -94,8 +94,11 @@ async fn load_directory(file: &mut File) -> (Vec<u32>, u8) {
 async fn save_directory(vec: &Vec<u32>, file: &mut File) {
     let addr_count = vec.len();
     let global_level = addr_count_to_global_level(addr_count);
+
     file.seek(SeekFrom::Start(0)).await.unwrap();
-    file.write_u8(global_level).await.unwrap();
+    let global_level_buf = global_level.to_le_bytes();
+    file.write_all(&global_level_buf).await.unwrap();
+
     let mut buf = vec![0; vec.len() * 4];
     for i in 0..addr_count {
         let bytes = vec[i].to_le_bytes();
@@ -131,12 +134,12 @@ pub struct HashStorage {
 
     /// The current number of buckets, we need this to know
     /// where to create new buckets, loaded from the buckets file
-    bucket_count: u32,
+    bucket_count: BucketCount,
 
     /// The global level of the index
     ///
     /// Saved and loaded from the directory file
-    global_level: u8,
+    global_level: GlobalLevel,
 
     /// Pointers to the bucket number
     ///
