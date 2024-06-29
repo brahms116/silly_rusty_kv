@@ -77,8 +77,13 @@ async fn load_directory(file: &mut File) -> (Vec<u32>, GlobalLevel) {
     }
 
     file.seek(SeekFrom::Start(0)).await.unwrap();
-    let global_level = file.read_u8().await.unwrap();
+
+    let mut global_level_buf = [0; GLOBAL_LEVEL_BYTES];
+    file.read_exact(&mut global_level_buf).await.unwrap();
+    let global_level = GlobalLevel::from_le_bytes(global_level_buf);
+
     let addr_count = (2 as usize).pow(global_level.into());
+
     let mut buf = vec![0; addr_count * 4];
     file.read_exact(&mut buf).await.unwrap();
 
