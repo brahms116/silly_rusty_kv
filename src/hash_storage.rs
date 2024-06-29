@@ -1,6 +1,5 @@
 /// Extensible hashing storage
 /// TODO: Use the constants instead of weird having random numbers everywhere
-use crate::consts::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::io::SeekFrom;
@@ -8,6 +7,23 @@ use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::command::*;
+
+const PAGE_SIZE: usize = 4096;
+const BUCKET_HEADER: usize = 1;
+const HASH_RECORD_HEADER: usize = 1;
+const HASH_LENGTH: usize = 8;
+const HASH_VALUE_HEADER: usize = 2;
+const MAX_HASH_VALUE_SIZE: usize =
+    PAGE_SIZE - BUCKET_HEADER - HASH_RECORD_HEADER - HASH_LENGTH - HASH_VALUE_HEADER;
+
+type BucketCount = u32;
+const BUCKET_COUNT_BYTES: usize = (BucketCount::BITS / 8) as usize;
+
+type BucketIndex = u32;
+const BUCKET_INDEX_BYTES: usize = (BucketIndex::BITS / 8) as usize;
+
+type GlobalLevel = u8;
+const GLOBAL_LEVEL_BYTES: usize = (GlobalLevel::BITS / 8) as usize;
 
 fn hash_string_key(key: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -20,8 +36,8 @@ fn hash_string_key(key: &str) -> u64 {
 ///
 /// This should just be log base 2 of the global level or
 /// the position of most significant bit
-fn addr_count_to_global_level(mut length: usize) -> u8 {
-    let mut result: u8 = 0;
+fn addr_count_to_global_level(mut length: usize) -> GlobalLevel {
+    let mut result: GlobalLevel = 0;
     while length > 1 {
         length = length >> 1;
         result += 1;
@@ -29,7 +45,7 @@ fn addr_count_to_global_level(mut length: usize) -> u8 {
     return result;
 }
 
-async fn load_bucket_file(file: &mut File) -> u32 {
+async fn load_bucket_file(file: &mut File) -> BucketCount {
     if file.metadata().await.unwrap().len() == 0 {
         // setup the file by pushing an empty bucket to it
         let bucket = Bucket {
@@ -43,10 +59,12 @@ async fn load_bucket_file(file: &mut File) -> u32 {
         return 1;
     }
     file.seek(SeekFrom::Start(0)).await.unwrap();
-    return file.read_u32_le().await.unwrap();
+    let mut buf = [0; BUCKET_COUNT_BYTES];
+    file.read_exact(&mut buf).await.unwrap();
+    return BucketCount::from_le_bytes(buf);
 }
 
-async fn save_bucket_file(bucket_count: u32, file: &mut File) {
+async fn save_bucket_file(bucket_count: BucketCount, file: &mut File) {
     file.seek(SeekFrom::Start(0)).await.unwrap();
     let buf = bucket_count.to_le_bytes();
     return file.write_all(&buf).await.unwrap();
