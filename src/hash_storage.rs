@@ -1,26 +1,34 @@
-/// Extensible hashing storage
-/// TODO: Use the constants instead of weird having random numbers everywhere
+use crate::command::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
 use std::io::SeekFrom;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-use crate::command::*;
+// ### CONSTANTS
+// Define some constants so that we don't have to do manual arithmetic when dealing with ranges in
+// byte slices
 
 /// Number of bytes in a page
 const PAGE_BYTES: usize = 4096;
 
+/// The type used to represent the local bucket level in the hash table
 type BucketLevel = u8;
+
+/// The length in bytes of `BucketLevel`
 const BUCKET_HEADER_BYTES: usize = (BucketLevel::BITS / 8) as usize;
 
 /// The header to indicate that a record is present and not empty space, see `Record` for the full
 /// layout
 const RECORD_HEADER: u8 = 1;
+
+/// The length of the record header in bytes
 const RECORD_HEADER_BYTES: usize = 1;
 
 /// Type representing a hash in the hash table
 type Hash = u64;
+
+/// The length in bytes of a hash
 const HASH_BYTES: usize = (Hash::BITS / 8) as usize;
 
 /// The type used to indicate the len of the value component in a record, see `Record` for the full layout
@@ -33,15 +41,27 @@ const RECORD_VALUE_HEADER_BYTES: usize = (RecordValueLength::BITS / 8) as usize;
 const MAX_HASH_VALUE_BYTES: usize =
     PAGE_BYTES - BUCKET_HEADER_BYTES - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
 
+/// Type used to represent the total bucket count in the hash table
 type BucketCount = u32;
+
+/// The length in bytes of `BucketCount`
 const BUCKET_COUNT_BYTES: usize = (BucketCount::BITS / 8) as usize;
 
+/// The type used to reference and index buckets in the hash table
 type BucketIndex = BucketCount;
+
+/// The length in bytes of `BucketIndex`
 const BUCKET_INDEX_BYTES: usize = (BucketIndex::BITS / 8) as usize;
 
+/// The type used to define the global level of the hash table
 type GlobalLevel = u8;
+
+/// The length in bytes of `GlobalLevel`
 const GLOBAL_LEVEL_BYTES: usize = (GlobalLevel::BITS / 8) as usize;
 
+// ### Utils
+
+/// Returns a hash from a string key
 fn hash_string_key(key: &str) -> Hash {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
@@ -62,8 +82,10 @@ fn addr_count_to_global_level(mut length: usize) -> GlobalLevel {
     return result;
 }
 
-async fn load_bucket_file(file: &mut File) -> BucketCount {
-    if file.metadata().await.unwrap().len() == 0 {
+/// Reads the bucket count from the "buckets file" of the hash table, see the `buckets_file` field of `HashStorage`
+/// for more details
+async fn load_buckets_file(buckets_file: &mut File) -> BucketCount {
+    if buckets_file.metadata().await.unwrap().len() == 0 {
         // setup the file by pushing an empty bucket to it
         let bucket = Bucket {
             records: vec![],
@@ -72,37 +94,46 @@ async fn load_bucket_file(file: &mut File) -> BucketCount {
             // Doesn't matter
             remaining_byte_space: 0,
         };
-        bucket.save_to_file(file).await;
+        bucket.save_to_file(buckets_file).await;
         return 1;
     }
-    file.seek(SeekFrom::Start(0)).await.unwrap();
+    buckets_file.seek(SeekFrom::Start(0)).await.unwrap();
     let mut buf = [0; BUCKET_COUNT_BYTES];
-    file.read_exact(&mut buf).await.unwrap();
+    buckets_file.read_exact(&mut buf).await.unwrap();
     return BucketCount::from_le_bytes(buf);
 }
 
-async fn save_bucket_file(bucket_count: BucketCount, file: &mut File) {
-    file.seek(SeekFrom::Start(0)).await.unwrap();
+/// Saves the bucket count into the "buckets file" of the hash table, see the `buckets_file` field of `HashStorage`
+/// for more details
+async fn save_buckets_file(bucket_count: BucketCount, buckets_file: &mut File) {
+    buckets_file.seek(SeekFrom::Start(0)).await.unwrap();
     let buf = bucket_count.to_le_bytes();
-    return file.write_all(&buf).await.unwrap();
+    return buckets_file.write_all(&buf).await.unwrap();
 }
 
-async fn load_directory(file: &mut File) -> (Vec<BucketIndex>, GlobalLevel) {
+/// Loads the directory file of the hash table
+///
+/// # Returns
+/// - A tuple containing the directory and the global level of the hash table
+async fn load_directory(directory_file: &mut File) -> (Vec<BucketIndex>, GlobalLevel) {
     // Return if the file is empty
-    if file.metadata().await.unwrap().len() == 0 {
+    if directory_file.metadata().await.unwrap().len() == 0 {
         return (vec![0], 0);
     }
 
-    file.seek(SeekFrom::Start(0)).await.unwrap();
+    directory_file.seek(SeekFrom::Start(0)).await.unwrap();
 
     let mut global_level_buf = [0; GLOBAL_LEVEL_BYTES];
-    file.read_exact(&mut global_level_buf).await.unwrap();
+    directory_file
+        .read_exact(&mut global_level_buf)
+        .await
+        .unwrap();
     let global_level = GlobalLevel::from_le_bytes(global_level_buf);
 
     let addr_count = 2_usize.pow(global_level.into());
 
     let mut buf = vec![0; addr_count * BUCKET_INDEX_BYTES];
-    file.read_exact(&mut buf).await.unwrap();
+    directory_file.read_exact(&mut buf).await.unwrap();
 
     let mut result = vec![0; addr_count];
     for i in 0..addr_count {
@@ -113,13 +144,14 @@ async fn load_directory(file: &mut File) -> (Vec<BucketIndex>, GlobalLevel) {
     return (result, global_level);
 }
 
-async fn save_directory(vec: &Vec<BucketIndex>, file: &mut File) {
+/// Saves the directory of the hash table into the directory file
+async fn save_directory(vec: &Vec<BucketIndex>, directory_file: &mut File) {
     let addr_count = vec.len();
     let global_level = addr_count_to_global_level(addr_count);
 
-    file.seek(SeekFrom::Start(0)).await.unwrap();
+    directory_file.seek(SeekFrom::Start(0)).await.unwrap();
     let global_level_buf = global_level.to_le_bytes();
-    file.write_all(&global_level_buf).await.unwrap();
+    directory_file.write_all(&global_level_buf).await.unwrap();
 
     let mut buf = vec![0; vec.len() * BUCKET_INDEX_BYTES];
     for i in 0..addr_count {
@@ -129,16 +161,16 @@ async fn save_directory(vec: &Vec<BucketIndex>, file: &mut File) {
             buf[start + k] = bytes[k]
         }
     }
-    file.write_all(&buf).await.unwrap();
+    directory_file.write_all(&buf).await.unwrap();
 }
 
-/// Hash storage engine
+/// Hash storage engine utilising extensible hashing
 pub struct HashStorage {
     /// The file containing the look up table and the global level
     ///
-    /// ## File layout
-    /// - First byte is the global level
-    /// - Next is followed by the list of u32s stored in LE
+    /// # File layout
+    /// - First `GLOBAL_LEVEL_BYTES` is the global level
+    /// - Next is followed by the list of `BucketIndex`s stored in LE
     /// The length of this list is 2^global_level
     ///
     /// There are no pages in this file, the entire file is loaded and saved all at once
@@ -146,8 +178,8 @@ pub struct HashStorage {
 
     /// The file containing the buckets
     ///
-    /// ## File layout
-    /// - First u32 is the number of current buckets
+    /// # File layout
+    /// - First `BUCKET_HEADER_BYTES` is the number of current buckets
     /// - Followed by pages of PAGE_SIZE, with each page being a bucket
     buckets_file: File,
 
@@ -208,7 +240,7 @@ impl HashStorage {
 
         let (bucket_addresses, global_level) = load_directory(&mut directory_file).await;
 
-        let bucket_count = load_bucket_file(&mut buckets_file).await;
+        let bucket_count = load_buckets_file(&mut buckets_file).await;
 
         Self {
             directory_file,
@@ -246,7 +278,7 @@ impl HashStorage {
 
     async fn exit(&mut self) {
         save_directory(&self.bucket_lookup, &mut self.directory_file).await;
-        save_bucket_file(self.bucket_count, &mut self.buckets_file).await;
+        save_buckets_file(self.bucket_count, &mut self.buckets_file).await;
         self.directory_file.sync_all().await.unwrap();
         self.buckets_file.sync_all().await.unwrap();
     }
@@ -533,7 +565,7 @@ mod test_bucket {
 
 /// The record stored in the database
 ///
-/// Made of the hash the u64, and the binary data
+/// Made of the hash of type `Hash` and the associated binary data
 ///
 /// ## Binary representation
 ///
