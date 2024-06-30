@@ -2,64 +2,33 @@ use crate::command::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
 use std::io::SeekFrom;
+use std::mem::size_of;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
-// ### CONSTANTS
-// Define some constants so that we don't have to do manual arithmetic when dealing with ranges in
-// byte slices
-
 /// Number of bytes in a page
 const PAGE_BYTES: usize = 4096;
-
-/// The type used to represent the local bucket level in the hash table
-type BucketLevel = u8;
-
-/// The length in bytes of `BucketLevel`
-const BUCKET_HEADER_BYTES: usize = (BucketLevel::BITS / 8) as usize;
-
-/// The header to indicate that a record is present and not empty space, see `Record` for the full
-/// layout
-const RECORD_HEADER: u8 = 1;
-
-/// The length of the record header in bytes
-const RECORD_HEADER_BYTES: usize = 1;
 
 /// Type representing a hash in the hash table
 type Hash = u64;
 
 /// The length in bytes of a hash
-const HASH_BYTES: usize = (Hash::BITS / 8) as usize;
+const HASH_BYTES: usize = size_of::<Hash>();
 
-/// The type used to indicate the len of the value component in a record, see `Record` for the full layout
-type RecordValueLength = u16;
+/// The type used to represent the level of a bucket in the hash table
+type BucketLevel = u8;
 
-/// The len in bytes for the value header in a record, see `Record` for the full layout
-const RECORD_VALUE_HEADER_BYTES: usize = (RecordValueLength::BITS / 8) as usize;
+/// The length in bytes of `BucketLevel`
+const BUCKET_LEVEL_BYTES: usize = size_of::<BucketLevel>();
 
-/// The maximum length in bytes in which a value in a record can be
-const MAX_HASH_VALUE_BYTES: usize =
-    PAGE_BYTES - BUCKET_HEADER_BYTES - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
+/// Type used for indexing and counting the number of buckets in the hash table
+///
+/// The reason this is usize is because we store the bucket index in a vec which is indexed by
+/// usize so the largest bucket count we can have is the largest usize
+type BucketIndexType = usize;
 
-/// Type used to represent the total bucket count in the hash table
-type BucketCount = u32;
-
-/// The length in bytes of `BucketCount`
-const BUCKET_COUNT_BYTES: usize = (BucketCount::BITS / 8) as usize;
-
-/// The type used to reference and index buckets in the hash table
-type BucketIndex = BucketCount;
-
-/// The length in bytes of `BucketIndex`
-const BUCKET_INDEX_BYTES: usize = (BucketIndex::BITS / 8) as usize;
-
-/// The type used to define the global level of the hash table
-type GlobalLevel = u8;
-
-/// The length in bytes of `GlobalLevel`
-const GLOBAL_LEVEL_BYTES: usize = (GlobalLevel::BITS / 8) as usize;
-
-// ### Utils
+/// The length in bytes of `BucketIndexType`
+const BUCKET_INDEX_TYPE_BYTES: usize = size_of::<BucketIndexType>();
 
 /// Returns a hash from a string key
 fn hash_string_key(key: &str) -> Hash {
@@ -73,8 +42,8 @@ fn hash_string_key(key: &str) -> Hash {
 ///
 /// This should just be log base 2 of the global level or
 /// the position of most significant bit
-fn addr_count_to_global_level(mut length: usize) -> GlobalLevel {
-    let mut result: GlobalLevel = 0;
+fn addr_count_to_global_level(mut length: usize) -> BucketLevel {
+    let mut result: BucketLevel = 0;
     while length > 1 {
         length = length >> 1;
         result += 1;
@@ -84,7 +53,7 @@ fn addr_count_to_global_level(mut length: usize) -> GlobalLevel {
 
 /// Reads the bucket count from the "buckets file" of the hash table, see the `buckets_file` field of `HashStorage`
 /// for more details
-async fn load_buckets_file(buckets_file: &mut File) -> BucketCount {
+async fn load_buckets_file(buckets_file: &mut File) -> BucketIndexType {
     if buckets_file.metadata().await.unwrap().len() == 0 {
         // setup the file by pushing an empty bucket to it
         let bucket = Bucket {
@@ -98,14 +67,14 @@ async fn load_buckets_file(buckets_file: &mut File) -> BucketCount {
         return 1;
     }
     buckets_file.seek(SeekFrom::Start(0)).await.unwrap();
-    let mut buf = [0; BUCKET_COUNT_BYTES];
+    let mut buf = [0; BUCKET_INDEX_TYPE_BYTES];
     buckets_file.read_exact(&mut buf).await.unwrap();
-    return BucketCount::from_le_bytes(buf);
+    return BucketIndexType::from_le_bytes(buf);
 }
 
 /// Saves the bucket count into the "buckets file" of the hash table, see the `buckets_file` field of `HashStorage`
 /// for more details
-async fn save_buckets_file(bucket_count: BucketCount, buckets_file: &mut File) {
+async fn save_buckets_file(bucket_count: BucketIndexType, buckets_file: &mut File) {
     buckets_file.seek(SeekFrom::Start(0)).await.unwrap();
     let buf = bucket_count.to_le_bytes();
     return buckets_file.write_all(&buf).await.unwrap();
@@ -115,7 +84,7 @@ async fn save_buckets_file(bucket_count: BucketCount, buckets_file: &mut File) {
 ///
 /// # Returns
 /// - A tuple containing the directory and the global level of the hash table
-async fn load_directory(directory_file: &mut File) -> (Vec<BucketIndex>, GlobalLevel) {
+async fn load_directory(directory_file: &mut File) -> (Vec<BucketIndexType>, BucketLevel) {
     // Return if the file is empty
     if directory_file.metadata().await.unwrap().len() == 0 {
         return (vec![0], 0);
@@ -123,29 +92,32 @@ async fn load_directory(directory_file: &mut File) -> (Vec<BucketIndex>, GlobalL
 
     directory_file.seek(SeekFrom::Start(0)).await.unwrap();
 
-    let mut global_level_buf = [0; GLOBAL_LEVEL_BYTES];
+    let mut global_level_buf = [0; BUCKET_LEVEL_BYTES];
     directory_file
         .read_exact(&mut global_level_buf)
         .await
         .unwrap();
-    let global_level = GlobalLevel::from_le_bytes(global_level_buf);
+    let global_level = BucketLevel::from_le_bytes(global_level_buf);
 
     let addr_count = 2_usize.pow(global_level.into());
 
-    let mut buf = vec![0; addr_count * BUCKET_INDEX_BYTES];
+    let mut buf = vec![0; addr_count * BUCKET_INDEX_TYPE_BYTES];
     directory_file.read_exact(&mut buf).await.unwrap();
 
     let mut result = vec![0; addr_count];
     for i in 0..addr_count {
-        let start = BUCKET_INDEX_BYTES * i;
-        result[i] =
-            BucketIndex::from_le_bytes(buf[start..start + BUCKET_INDEX_BYTES].try_into().unwrap());
+        let start = BUCKET_INDEX_TYPE_BYTES * i;
+        result[i] = BucketIndexType::from_le_bytes(
+            buf[start..start + BUCKET_INDEX_TYPE_BYTES]
+                .try_into()
+                .unwrap(),
+        );
     }
     return (result, global_level);
 }
 
 /// Saves the directory of the hash table into the directory file
-async fn save_directory(vec: &Vec<BucketIndex>, directory_file: &mut File) {
+async fn save_directory(vec: &Vec<BucketIndexType>, directory_file: &mut File) {
     let addr_count = vec.len();
     let global_level = addr_count_to_global_level(addr_count);
 
@@ -153,11 +125,11 @@ async fn save_directory(vec: &Vec<BucketIndex>, directory_file: &mut File) {
     let global_level_buf = global_level.to_le_bytes();
     directory_file.write_all(&global_level_buf).await.unwrap();
 
-    let mut buf = vec![0; vec.len() * BUCKET_INDEX_BYTES];
+    let mut buf = vec![0; vec.len() * BUCKET_INDEX_TYPE_BYTES];
     for i in 0..addr_count {
         let bytes = vec[i].to_le_bytes();
-        let start = BUCKET_INDEX_BYTES * i;
-        for k in 0..BUCKET_INDEX_BYTES {
+        let start = BUCKET_INDEX_TYPE_BYTES * i;
+        for k in 0..BUCKET_INDEX_TYPE_BYTES {
             buf[start + k] = bytes[k]
         }
     }
@@ -169,8 +141,9 @@ pub struct HashStorage {
     /// The file containing the look up table and the global level
     ///
     /// # File layout
-    /// - First `GLOBAL_LEVEL_BYTES` is the global level
-    /// - Next is followed by the list of `BucketIndex`s stored in LE
+    /// - First `BUCKET_LEVEL_BYTES` is the global level in LE
+    /// - Next is followed by the list of `BucketIndexTypes`s stored in LE as the index lookup for
+    /// where the buckets are stored
     /// The length of this list is 2^global_level
     ///
     /// There are no pages in this file, the entire file is loaded and saved all at once
@@ -185,12 +158,12 @@ pub struct HashStorage {
 
     /// The current number of buckets, we need this to know
     /// where to create new buckets, loaded from the buckets file
-    bucket_count: BucketCount,
+    bucket_count: BucketIndexType,
 
     /// The global level of the index
     ///
     /// Saved and loaded from the directory file
-    global_level: GlobalLevel,
+    global_level: BucketLevel,
 
     /// Pointers to the bucket number
     ///
@@ -207,7 +180,7 @@ pub struct HashStorage {
     /// ... and so on
     ///
     /// This is loaded and saved from the directory file
-    bucket_lookup: Vec<BucketIndex>,
+    bucket_lookup: Vec<BucketIndexType>,
 }
 
 impl HashStorage {
@@ -394,7 +367,7 @@ impl HashStorage {
                 for index in &indices {
                     let remainder = index % 2_usize.pow(bucket.level.into());
                     if remainder > og_bucket_remainder {
-                        self.bucket_lookup[*index] = new_bucket_index as u32;
+                        self.bucket_lookup[*index] = new_bucket_index;
                     }
                 }
             } else {
@@ -403,7 +376,7 @@ impl HashStorage {
                 // Readjust the indices
                 let old_len = self.bucket_lookup.len();
                 self.bucket_lookup.extend(self.bucket_lookup.clone());
-                self.bucket_lookup[old_len + og_bucket_remainder] = new_bucket_index as u32;
+                self.bucket_lookup[old_len + og_bucket_remainder] = new_bucket_index;
 
                 self.global_level += 1;
             }
@@ -452,7 +425,7 @@ impl HashStorage {
 #[derive(PartialEq, Debug, Clone)]
 pub struct Bucket {
     /// The nth bucket in the bucket file, 0 indexed
-    bucket_index: BucketIndex,
+    bucket_index: BucketIndexType,
 
     /// The local level of the bucket
     level: BucketLevel,
@@ -464,9 +437,13 @@ pub struct Bucket {
     records: Vec<Record>,
 }
 
+/// The length of the bucket header in bytes
+const BUCKET_HEADER_BYTES: usize = BUCKET_LEVEL_BYTES;
+
 impl Bucket {
-    fn parse_from_bytes(bytes: &[u8], bucket_index: BucketIndex) -> Result<(Self, &[u8]), ()> {
+    fn parse_from_bytes(bytes: &[u8], bucket_index: BucketIndexType) -> Result<(Self, &[u8]), ()> {
         let mut page = &bytes[0..PAGE_BYTES];
+        // TODO: Refactor this to not always be depedent on u8
         let level = page[0];
         page = &page[1..];
 
@@ -501,9 +478,9 @@ impl Bucket {
         self.remaining_byte_space = PAGE_BYTES - BUCKET_HEADER_BYTES - records_byte_len
     }
 
-    async fn read_from_file(file: &mut File, bucket_index: BucketIndex) -> Self {
+    async fn read_from_file(file: &mut File, bucket_index: BucketIndexType) -> Self {
         file.seek(SeekFrom::Start(
-            (BUCKET_COUNT_BYTES + (bucket_index as usize) * PAGE_BYTES) as u64,
+            (BUCKET_INDEX_TYPE_BYTES + (bucket_index as usize) * PAGE_BYTES) as u64,
         ))
         .await
         .unwrap();
@@ -515,7 +492,7 @@ impl Bucket {
 
     async fn save_to_file(&self, file: &mut File) {
         file.seek(SeekFrom::Start(
-            (BUCKET_COUNT_BYTES + self.bucket_index as usize * PAGE_BYTES) as u64,
+            (BUCKET_INDEX_TYPE_BYTES + self.bucket_index as usize * PAGE_BYTES) as u64,
         ))
         .await
         .unwrap();
@@ -578,6 +555,23 @@ mod test_bucket {
 ///
 #[derive(Clone, Debug, PartialEq)]
 struct Record(Hash, Vec<u8>);
+
+/// The header to indicate that a record is present and not empty space, see `Record` for the full
+/// layout
+const RECORD_HEADER: u8 = 1;
+
+/// The length of the record header in bytes
+const RECORD_HEADER_BYTES: usize = 1;
+
+/// The type used to indicate the len of the value component in a record, see `Record` for the full layout
+type RecordValueLength = u16;
+
+/// The len in bytes for the value header in a record, see `Record` for the full layout
+const RECORD_VALUE_HEADER_BYTES: usize = size_of::<RecordValueLength>();
+
+/// The maximum length in bytes in which a value in a record can be
+const MAX_HASH_VALUE_BYTES: usize =
+    PAGE_BYTES - BUCKET_HEADER_BYTES - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
 
 impl Record {
     fn into_bytes(self) -> Vec<u8> {
