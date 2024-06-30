@@ -1,31 +1,48 @@
 /// Extensible hashing storage
 /// TODO: Use the constants instead of weird having random numbers everywhere
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hash as _, Hasher};
 use std::io::SeekFrom;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::command::*;
 
-const PAGE_SIZE: usize = 4096;
-const BUCKET_HEADER: usize = 1;
-const HASH_RECORD_HEADER: usize = 1;
-const HASH_LENGTH: usize = 8;
-const HASH_VALUE_HEADER: usize = 2;
-const MAX_HASH_VALUE_SIZE: usize =
-    PAGE_SIZE - BUCKET_HEADER - HASH_RECORD_HEADER - HASH_LENGTH - HASH_VALUE_HEADER;
+/// Number of bytes in a page
+const PAGE_BYTES: usize = 4096;
+
+type BucketLevel = u8;
+const BUCKET_HEADER_BYTES: usize = (BucketLevel::BITS / 8) as usize;
+
+/// The header to indicate that a record is present and not empty space, see `Record` for the full
+/// layout
+const RECORD_HEADER: u8 = 1;
+const RECORD_HEADER_BYTES: usize = 1;
+
+/// Type representing a hash in the hash table
+type Hash = u64;
+const HASH_BYTES: usize = (Hash::BITS / 8) as usize;
+
+/// The type used to indicate the len of the value component in a record, see `Record` for the full layout
+type RecordValueLength = u16;
+
+/// The len in bytes for the value header in a record, see `Record` for the full layout
+const RECORD_VALUE_HEADER_BYTES: usize = (RecordValueLength::BITS / 8) as usize;
+
+/// The maximum length in bytes in which a value in a record can be
+const MAX_HASH_VALUE_BYTES: usize =
+    PAGE_BYTES - BUCKET_HEADER_BYTES - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
 
 type BucketCount = u32;
 const BUCKET_COUNT_BYTES: usize = (BucketCount::BITS / 8) as usize;
 
-type BucketIndex = u32;
+type BucketIndex = BucketCount;
 const BUCKET_INDEX_BYTES: usize = (BucketIndex::BITS / 8) as usize;
 
 type GlobalLevel = u8;
 const GLOBAL_LEVEL_BYTES: usize = (GlobalLevel::BITS / 8) as usize;
 
-fn hash_string_key(key: &str) -> u64 {
+fn hash_string_key(key: &str) -> Hash {
     let mut hasher = DefaultHasher::new();
     key.hash(&mut hasher);
     hasher.finish()
@@ -116,8 +133,6 @@ async fn save_directory(vec: &Vec<BucketIndex>, file: &mut File) {
 }
 
 /// Hash storage engine
-///
-/// Abitarily chosen max bucket number to be u64::MAX the
 pub struct HashStorage {
     /// The file containing the look up table and the global level
     ///
@@ -160,7 +175,7 @@ pub struct HashStorage {
     /// ... and so on
     ///
     /// This is loaded and saved from the directory file
-    bucket_lookup: Vec<u32>,
+    bucket_lookup: Vec<BucketIndex>,
 }
 
 impl HashStorage {
@@ -236,7 +251,7 @@ impl HashStorage {
         self.buckets_file.sync_all().await.unwrap();
     }
 
-    fn hash_key_to_remainder(&self, key: &str) -> (u64, usize) {
+    fn hash_key_to_remainder(&self, key: &str) -> (Hash, usize) {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         let hash = hasher.finish();
@@ -244,7 +259,7 @@ impl HashStorage {
         (hash, remainder.try_into().unwrap())
     }
 
-    fn hash_to_remainder(&self, hash: u64) -> usize {
+    fn hash_to_remainder(&self, hash: Hash) -> usize {
         (hash % 2_u64.pow(self.global_level.into()))
             .try_into()
             .unwrap()
@@ -315,7 +330,7 @@ impl HashStorage {
             // Original bucket
             bucket.records = original;
 
-            let new_bucket_index = self.bucket_count as usize;
+            let new_bucket_index = self.bucket_count;
 
             // New bucket
             let mut new_bucket = Bucket {
@@ -338,7 +353,7 @@ impl HashStorage {
                 // Grab all the lookup entries which point to the existing bucket
                 let mut indices = vec![];
                 for i in 0..self.bucket_lookup.len() {
-                    if self.bucket_lookup[i] as usize == bucket.bucket_index {
+                    if self.bucket_lookup[i] == bucket.bucket_index {
                         indices.push(i);
                     }
                 }
@@ -371,7 +386,7 @@ impl HashStorage {
         }
     }
 
-    async fn get(&mut self, hash: u64) -> Result<Option<Vec<u8>>, ()> {
+    async fn get(&mut self, hash: Hash) -> Result<Option<Vec<u8>>, ()> {
         let remainder = self.hash_to_remainder(hash);
         let bucket =
             Bucket::read_from_file(&mut self.buckets_file, self.bucket_lookup[remainder]).await;
@@ -406,10 +421,10 @@ impl HashStorage {
 #[derive(PartialEq, Debug, Clone)]
 pub struct Bucket {
     /// The nth bucket in the bucket file, 0 indexed
-    bucket_index: usize,
+    bucket_index: BucketIndex,
 
     /// The local level of the bucket
-    level: u8,
+    level: BucketLevel,
 
     /// The number of bytes remaining available in the bucket
     remaining_byte_space: usize,
@@ -419,8 +434,8 @@ pub struct Bucket {
 }
 
 impl Bucket {
-    fn parse_from_bytes(bytes: &[u8], bucket_number: usize) -> Result<(Self, &[u8]), ()> {
-        let mut page = &bytes[0..PAGE_SIZE];
+    fn parse_from_bytes(bytes: &[u8], bucket_index: BucketIndex) -> Result<(Self, &[u8]), ()> {
+        let mut page = &bytes[0..PAGE_BYTES];
         let level = page[0];
         page = &page[1..];
 
@@ -439,7 +454,7 @@ impl Bucket {
         }
 
         let mut bucket = Bucket {
-            bucket_index: bucket_number,
+            bucket_index,
             level,
             records,
             remaining_byte_space: 0,
@@ -447,31 +462,33 @@ impl Bucket {
 
         bucket.update_remaining_byte_count();
 
-        Ok((bucket, &bytes[PAGE_SIZE..]))
+        Ok((bucket, &bytes[PAGE_BYTES..]))
     }
 
     fn update_remaining_byte_count(&mut self) {
         let records_byte_len: usize = self.records.iter().map(|r| r.byte_len()).sum();
-        self.remaining_byte_space = PAGE_SIZE - BUCKET_HEADER - records_byte_len
+        self.remaining_byte_space = PAGE_BYTES - BUCKET_HEADER_BYTES - records_byte_len
     }
 
-    async fn read_from_file(file: &mut File, bucket_index: u32) -> Self {
+    async fn read_from_file(file: &mut File, bucket_index: BucketIndex) -> Self {
         file.seek(SeekFrom::Start(
-            (4 + (bucket_index as usize) * PAGE_SIZE) as u64,
+            (BUCKET_COUNT_BYTES + (bucket_index as usize) * PAGE_BYTES) as u64,
         ))
         .await
         .unwrap();
-        let mut buf = [0; PAGE_SIZE];
+        let mut buf = [0; PAGE_BYTES];
         file.read_exact(&mut buf).await.unwrap();
-        let (bucket, _) = Self::parse_from_bytes(&buf, bucket_index as usize).unwrap();
+        let (bucket, _) = Self::parse_from_bytes(&buf, bucket_index).unwrap();
         bucket
     }
 
     async fn save_to_file(&self, file: &mut File) {
-        file.seek(SeekFrom::Start((4 + self.bucket_index * PAGE_SIZE) as u64))
-            .await
-            .unwrap();
-        let mut buf = [0_u8; PAGE_SIZE];
+        file.seek(SeekFrom::Start(
+            (BUCKET_COUNT_BYTES + self.bucket_index as usize * PAGE_BYTES) as u64,
+        ))
+        .await
+        .unwrap();
+        let mut buf = [0_u8; PAGE_BYTES];
         buf[0] = self.level;
         let mut ptr = 1_usize;
         // TODO: Decide what to do with this clone
@@ -526,30 +543,44 @@ mod test_bucket {
 /// - The next 2 bytes is the length of the value
 /// - Followed by the value in bytes
 #[derive(Clone, Debug, PartialEq)]
-struct Record(u64, Vec<u8>);
+struct Record(Hash, Vec<u8>);
 
 impl Record {
     fn into_bytes(self) -> Vec<u8> {
         let mut result = vec![];
-        result.push(1);
+        result.push(RECORD_HEADER);
         result.extend(self.0.to_le_bytes());
-        result.extend((self.1.len() as u16).to_le_bytes());
+        result.extend((self.1.len() as RecordValueLength).to_le_bytes());
         result.extend(self.1);
         return result;
     }
 
     fn byte_len(&self) -> usize {
-        HASH_RECORD_HEADER + HASH_LENGTH + HASH_VALUE_HEADER + self.1.len()
+        RECORD_HEADER_BYTES + HASH_BYTES + RECORD_VALUE_HEADER_BYTES + self.1.len()
     }
 
     fn parse_from_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), ()> {
         if bytes[0] != 1 {
             return Err(());
         }
-        let hash = u64::from_le_bytes(bytes[1..9].try_into().unwrap());
-        let len = u16::from_le_bytes(bytes[9..11].try_into().unwrap());
-        let value = bytes[11..(11 + len) as usize].to_owned();
-        Ok((Record(hash, value), &bytes[(11 + len as usize)..]))
+
+        // Some indicies
+        let record_hash_start = RECORD_HEADER_BYTES;
+        let record_value_header_start = record_hash_start + HASH_BYTES;
+        let record_value_start = record_value_header_start + RECORD_VALUE_HEADER_BYTES;
+
+        let hash = Hash::from_le_bytes(
+            bytes[record_hash_start..record_value_header_start]
+                .try_into()
+                .unwrap(),
+        );
+        let len = RecordValueLength::from_le_bytes(
+            bytes[record_value_header_start..record_value_start]
+                .try_into()
+                .unwrap(),
+        );
+        let value = bytes[record_value_start..(record_value_start + len as usize)].to_owned();
+        Ok((Record(hash, value), &bytes[(record_value_start + len as usize)..]))
     }
 }
 
@@ -589,7 +620,7 @@ mod test_hash_storage {
     }
 
     fn record_from_size(hash: u64, byte: u8, size: usize) -> Record {
-        let value_len = size - HASH_RECORD_HEADER - HASH_LENGTH - HASH_VALUE_HEADER;
+        let value_len = size - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
         let value = vec![byte; value_len];
         Record(hash, value)
     }
