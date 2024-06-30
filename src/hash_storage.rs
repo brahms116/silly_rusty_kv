@@ -70,7 +70,7 @@ async fn save_bucket_file(bucket_count: BucketCount, file: &mut File) {
     return file.write_all(&buf).await.unwrap();
 }
 
-async fn load_directory(file: &mut File) -> (Vec<u32>, GlobalLevel) {
+async fn load_directory(file: &mut File) -> (Vec<BucketIndex>, GlobalLevel) {
     // Return if the file is empty
     if file.metadata().await.unwrap().len() == 0 {
         return (vec![0], 0);
@@ -82,21 +82,21 @@ async fn load_directory(file: &mut File) -> (Vec<u32>, GlobalLevel) {
     file.read_exact(&mut global_level_buf).await.unwrap();
     let global_level = GlobalLevel::from_le_bytes(global_level_buf);
 
-    let addr_count = (2 as usize).pow(global_level.into());
+    let addr_count = 2_usize.pow(global_level.into());
 
-    let mut buf = vec![0; addr_count * 4];
+    let mut buf = vec![0; addr_count * BUCKET_INDEX_BYTES];
     file.read_exact(&mut buf).await.unwrap();
 
     let mut result = vec![0; addr_count];
     for i in 0..addr_count {
-        let start = 4 * i;
+        let start = BUCKET_INDEX_BYTES * i;
         result[i] =
-            u32::from_le_bytes([buf[start], buf[start + 1], buf[start + 2], buf[start + 3]]);
+            BucketIndex::from_le_bytes(buf[start..start + BUCKET_INDEX_BYTES].try_into().unwrap());
     }
     return (result, global_level);
 }
 
-async fn save_directory(vec: &Vec<u32>, file: &mut File) {
+async fn save_directory(vec: &Vec<BucketIndex>, file: &mut File) {
     let addr_count = vec.len();
     let global_level = addr_count_to_global_level(addr_count);
 
@@ -104,14 +104,13 @@ async fn save_directory(vec: &Vec<u32>, file: &mut File) {
     let global_level_buf = global_level.to_le_bytes();
     file.write_all(&global_level_buf).await.unwrap();
 
-    let mut buf = vec![0; vec.len() * 4];
+    let mut buf = vec![0; vec.len() * BUCKET_INDEX_BYTES];
     for i in 0..addr_count {
         let bytes = vec[i].to_le_bytes();
-        let start = 4 * i;
-        buf[start] = bytes[0];
-        buf[start + 1] = bytes[1];
-        buf[start + 2] = bytes[2];
-        buf[start + 3] = bytes[3];
+        let start = BUCKET_INDEX_BYTES * i;
+        for k in 0..BUCKET_INDEX_BYTES {
+            buf[start + k] = bytes[k]
+        }
     }
     file.write_all(&buf).await.unwrap();
 }
