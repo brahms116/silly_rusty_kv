@@ -309,7 +309,7 @@ impl HashStorage {
             // self.hash_to_remainder again as the global level may have changed between the
             // iterations of the loop due to a global split
             let og_bucket_remainder =
-                self.hash_to_remainder(record.0) as u64 % 2_u64.pow(bucket.level.into());
+                self.hash_to_remainder(record.0) % 2_usize.pow(bucket.level.into());
 
             bucket.level += 1;
 
@@ -318,7 +318,7 @@ impl HashStorage {
                 (vec![], vec![]),
                 |(mut og_, mut new_), x| {
                     let remainder = x.0 % 2_u64.pow(bucket.level.into());
-                    if remainder > og_bucket_remainder {
+                    if remainder > og_bucket_remainder as u64 {
                         new_.push(x)
                     } else {
                         og_.push(x)
@@ -361,7 +361,7 @@ impl HashStorage {
                 // Re-adjust the lookup
                 for index in &indices {
                     let remainder = index % 2_usize.pow(bucket.level.into());
-                    if remainder as u64 > og_bucket_remainder {
+                    if remainder > og_bucket_remainder {
                         self.bucket_lookup[*index] = new_bucket_index as u32;
                     }
                 }
@@ -371,8 +371,7 @@ impl HashStorage {
                 // Readjust the indices
                 let old_len = self.bucket_lookup.len();
                 self.bucket_lookup.extend(self.bucket_lookup.clone());
-                self.bucket_lookup[old_len + og_bucket_remainder as usize] =
-                    new_bucket_index as u32;
+                self.bucket_lookup[old_len + og_bucket_remainder] = new_bucket_index as u32;
 
                 self.global_level += 1;
             }
@@ -380,7 +379,7 @@ impl HashStorage {
             // Re-assign "bucket" to the new bucket which the record matches against hash of the
             // record. This is because it might need to split again
             let new_remainder = record.0 % 2_u64.pow(bucket.level.into());
-            if new_remainder > og_bucket_remainder {
+            if new_remainder > og_bucket_remainder as u64 {
                 bucket = new_bucket;
             }
         }
@@ -415,7 +414,7 @@ impl HashStorage {
 ///
 /// ## Binary layout
 ///
-/// - First byte is the level
+/// - First `BUCKET_HEADER_BYTES` indicate the local level of the bucket
 /// - Rest are records
 ///
 #[derive(PartialEq, Debug, Clone)]
@@ -538,10 +537,13 @@ mod test_bucket {
 ///
 /// ## Binary representation
 ///
-/// - 1 byte header starting with 1 to indicate this is not empty space
-/// - The next 8 bytes are the hash
-/// - The next 2 bytes is the length of the value
-/// - Followed by the value in bytes
+/// - A record header of `RECORD_HEADER_BYTES` in length
+///     - This has a value of 1, indicating that it is not empty space
+/// - The hash containing `HASH_BYTES` in length
+/// - Record value header indicating the length of the value, has a length of
+/// `RECORD_VALUE_HEADER_BYTES`
+/// - The bytes containing the value with the length indicated by the record's value header
+///
 #[derive(Clone, Debug, PartialEq)]
 struct Record(Hash, Vec<u8>);
 
@@ -580,7 +582,10 @@ impl Record {
                 .unwrap(),
         );
         let value = bytes[record_value_start..(record_value_start + len as usize)].to_owned();
-        Ok((Record(hash, value), &bytes[(record_value_start + len as usize)..]))
+        Ok((
+            Record(hash, value),
+            &bytes[(record_value_start + len as usize)..],
+        ))
     }
 }
 
