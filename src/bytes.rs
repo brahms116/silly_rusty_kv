@@ -12,5 +12,5 @@ where
 {
     type Error;
     type Metadata;
-    fn from_bytes(bytes: &T, metadata: Self::Metadata) -> Result<(Self, T), Self::Error>;
+    fn from_bytes(bytes: T, metadata: Self::Metadata) -> Result<(Self, T), Self::Error>;
 }
