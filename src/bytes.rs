@@ -6,10 +6,11 @@ pub trait IntoBytes {
     fn into_bytes(self) -> Vec<u8>;
 }
 
-pub trait ParseFromBytes<T>: Sized
+pub trait ParseFromBytes<'a, T>: Sized
 where
-    T: Iterator<Item = u8>,
+    T: Iterator<Item = &'a u8>,
 {
     type Error;
-    fn from_bytes(bytes: T) -> Result<(Self, T), Self::Error>;
+    type Metadata;
+    fn from_bytes(bytes: &T, metadata: Self::Metadata) -> Result<(Self, T), Self::Error>;
 }

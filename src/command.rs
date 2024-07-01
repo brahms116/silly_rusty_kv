@@ -21,53 +21,72 @@ impl IntoBytes for PutCommand {
     }
 }
 
-impl<T> ParseFromBytes<T> for PutCommand
+/// # Binary layout:
+/// Key length -> u8,
+/// Value length -> u16,
+/// Key -> String,
+/// Value -> String
+impl<'a, T> ParseFromBytes<'a, T> for PutCommand
 where
-    T: Iterator<Item = u8>,
+    T: Iterator<Item = &'a u8> + Clone,
 {
     type Error = ();
+    type Metadata = ();
 
-    fn from_bytes(mut bytes: T) -> Result<(Self, T), Self::Error> {
-        let key_len = bytes.next().ok_or(())?;
-        let value_len_bytes: Vec<u8> = bytes.by_ref().take(2).collect();
+    fn from_bytes(bytes: &T, metadata: ()) -> Result<(Self, T), Self::Error> {
+        let mut bytes_copy = bytes.clone();
+        let key_len = bytes_copy.next().ok_or(())?;
+        let value_len_bytes: Vec<u8> = bytes_copy.by_ref().take(2).cloned().collect();
         let value_len = u16::from_le_bytes([value_len_bytes[0], value_len_bytes[1]]);
-        let key_bytes: Vec<u8> = bytes.by_ref().take(key_len as usize).collect();
-        let value_bytes: Vec<u8> = bytes.by_ref().take(value_len as usize).collect();
+        let key_bytes: Vec<u8> = bytes_copy
+            .by_ref()
+            .take(*key_len as usize)
+            .cloned()
+            .collect();
+        let value_bytes: Vec<u8> = bytes_copy
+            .by_ref()
+            .take(value_len as usize)
+            .cloned()
+            .collect();
         let key = String::from_utf8(key_bytes).map_err(|_| ())?;
         let value = String::from_utf8(value_bytes).map_err(|_| ())?;
-        Ok((PutCommand(key, value), bytes))
+        Ok((PutCommand(key, value), bytes_copy))
     }
 }
 
-impl<T> ParseFromBytes<T> for DeleteCommand
+impl<'a, T> ParseFromBytes<'a, T> for DeleteCommand
 where
-    T: Iterator<Item = u8>,
+    T: Iterator<Item = &'a u8> + Clone,
 {
     type Error = ();
+    type Metadata = ();
 
-    fn from_bytes(mut bytes: T) -> Result<(Self, T), ()> {
+    fn from_bytes(bytes: &T, metadata: ()) -> Result<(Self, T), ()> {
+        let mut bytes = bytes.clone();
         let key_len = bytes.next().ok_or(())?;
-        let key_bytes: Vec<u8> = bytes.by_ref().take(key_len as usize).collect();
+        let key_bytes: Vec<u8> = bytes.by_ref().take(*key_len as usize).cloned().collect();
         let key = String::from_utf8(key_bytes).map_err(|_| ())?;
         Ok((DeleteCommand(key), bytes))
     }
 }
 
-impl<T> ParseFromBytes<T> for Mutation
+impl<'a, T> ParseFromBytes<'a, T> for Mutation
 where
-    T: Iterator<Item = u8>,
+    T: Iterator<Item = &'a u8> + Clone,
 {
     type Error = ();
+    type Metadata = ();
 
-    fn from_bytes(mut bytes: T) -> Result<(Self, T), Self::Error> {
+    fn from_bytes(bytes: &T, metadata: ()) -> Result<(Self, T), Self::Error> {
+        let mut bytes = bytes.clone();
         let header = bytes.next().ok_or(())?;
         match header {
             1 => {
-                let (cmd, rest) = DeleteCommand::from_bytes(bytes)?;
+                let (cmd, rest) = DeleteCommand::from_bytes(&bytes, ())?;
                 Ok((Mutation::Delete(cmd), rest))
             }
             2 => {
-                let (cmd, rest) = PutCommand::from_bytes(bytes)?;
+                let (cmd, rest) = PutCommand::from_bytes(&bytes, ())?;
                 Ok((Mutation::Put(cmd), rest))
             }
             _ => Err(()),
@@ -75,13 +94,13 @@ where
     }
 }
 
-pub fn get_value_from_buffer<T: Iterator<Item = u8>>(
+pub fn get_value_from_buffer<'a, T: Iterator<Item = &'a u8> + Clone>(
     bytes: T,
     key: &str,
 ) -> Result<Option<Option<String>>, ()> {
     let mut rest = bytes;
     let mut value: Option<Option<String>> = None;
-    while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
+    while let Ok((mutation, new_rest)) = Mutation::from_bytes(&rest, ()) {
         // println!("mutation: {:?}", mutation);
         match mutation {
             Mutation::Put(PutCommand(k, v)) => {
@@ -145,10 +164,12 @@ pub fn get_value_from_mutations<T: Iterator<Item = Mutation>>(
     value
 }
 
-pub fn parse_buffer_to_mutations<T: Iterator<Item = u8>>(bytes: T) -> Result<Vec<Mutation>, ()> {
+pub fn parse_buffer_to_mutations<'a, T: Iterator<Item = &'a u8> + Clone>(
+    bytes: T,
+) -> Result<Vec<Mutation>, ()> {
     let mut mutations = Vec::new();
     let mut rest = bytes;
-    while let Ok((mutation, new_rest)) = Mutation::from_bytes(rest) {
+    while let Ok((mutation, new_rest)) = Mutation::from_bytes(&rest, ()) {
         mutations.push(mutation);
         rest = new_rest;
     }

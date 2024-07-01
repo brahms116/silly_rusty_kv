@@ -117,7 +117,7 @@ impl StorageEngine {
                 .unwrap();
             self.read_file.read_exact(&mut buf).await.unwrap();
 
-            if let Some(value) = get_value_from_buffer(buf.into_iter(), &cmd.0).unwrap() {
+            if let Some(value) = get_value_from_buffer(buf.iter(), &cmd.0).unwrap() {
                 return Ok(value);
             }
         }
@@ -133,7 +133,7 @@ impl StorageEngine {
                 .unwrap();
             self.read_file.read_exact(&mut buf).await.unwrap();
 
-            if let Some(value) = get_value_from_buffer(buf.into_iter(), &cmd.0).unwrap() {
+            if let Some(value) = get_value_from_buffer(buf.iter(), &cmd.0).unwrap() {
                 return Ok(value);
             }
         }
@@ -189,7 +189,7 @@ impl StorageEngine {
             println!("Page: {} START", page);
 
             // Collect the mutations from the buffer as a vector or mutations
-            let mutations = parse_buffer_to_mutations(buf.into_iter()).unwrap();
+            let mutations = parse_buffer_to_mutations(buf.iter()).unwrap();
 
             // Print the mutations
             for mutation in mutations {
