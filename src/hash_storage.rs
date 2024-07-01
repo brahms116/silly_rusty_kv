@@ -1,3 +1,4 @@
+use crate::bytes::ParseFromBytes;
 use crate::command::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
@@ -446,19 +447,18 @@ impl Bucket {
         // TODO: Refactor this to not always be depedent on u8
         let level = page[0];
         page = &page[1..];
-
         let mut records = vec![];
-        loop {
-            if page.len() == 0 {
-                break;
+
+        let mut page = page.iter().peekable();
+
+        while let Some(x) = page.peek() {
+            if **x == 0 {
+                page.next();
+                continue;
             }
-            if page[0] == 0 {
-                page = &page[1..]
-            } else {
-                let (record, rest_page) = Record::parse_from_bytes(page).unwrap();
-                records.push(record);
-                page = rest_page;
-            }
+            let (record, rest_page) = Record::from_bytes(page, ()).unwrap();
+            records.push(record);
+            page = rest_page;
         }
 
         let mut bucket = Bucket {
@@ -556,12 +556,15 @@ mod test_bucket {
 #[derive(Clone, Debug, PartialEq)]
 struct Record(Hash, Vec<u8>);
 
+/// The type used to indicate the header of a record, see `Record` for the full layout
+type RecordHeader = u8;
+
 /// The header to indicate that a record is present and not empty space, see `Record` for the full
 /// layout
-const RECORD_HEADER: u8 = 1;
+const RECORD_HEADER: RecordHeader = 1;
 
 /// The length of the record header in bytes
-const RECORD_HEADER_BYTES: usize = 1;
+const RECORD_HEADER_BYTES: usize = size_of::<RecordHeader>();
 
 /// The type used to indicate the len of the value component in a record, see `Record` for the full layout
 type RecordValueLength = u16;
@@ -587,31 +590,59 @@ impl Record {
         RECORD_HEADER_BYTES + HASH_BYTES + RECORD_VALUE_HEADER_BYTES + self.1.len()
     }
 
-    fn parse_from_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), ()> {
-        if bytes[0] != 1 {
+    // fn parse_from_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), ()> {
+    //     if bytes[0] != 1 {
+    //         return Err(());
+    //     }
+
+    //     // Some indicies
+    //     let record_hash_start = RECORD_HEADER_BYTES;
+    //     let record_value_header_start = record_hash_start + HASH_BYTES;
+    //     let record_value_start = record_value_header_start + RECORD_VALUE_HEADER_BYTES;
+
+    //     let hash = Hash::from_le_bytes(
+    //         bytes[record_hash_start..record_value_header_start]
+    //             .try_into()
+    //             .unwrap(),
+    //     );
+    //     let len = RecordValueLength::from_le_bytes(
+    //         bytes[record_value_header_start..record_value_start]
+    //             .try_into()
+    //             .unwrap(),
+    //     );
+    //     let value = bytes[record_value_start..(record_value_start + len as usize)].to_owned();
+    //     Ok((
+    //         Record(hash, value),
+    //         &bytes[(record_value_start + len as usize)..],
+    //     ))
+    // }
+}
+
+impl<'a, T> ParseFromBytes<'a, T> for Record
+where
+    T: Iterator<Item = &'a u8>,
+{
+    type Error = ();
+    type Metadata = ();
+
+    fn from_bytes(mut bytes: T, metadata: ()) -> Result<(Self, T), Self::Error> {
+        let header_bytes: Vec<u8> = bytes.by_ref().take(RECORD_HEADER_BYTES).cloned().collect();
+        let header = RecordHeader::from_le_bytes(header_bytes.try_into().unwrap());
+        if header != RECORD_HEADER {
             return Err(());
         }
+        let hash_bytes: Vec<u8> = bytes.by_ref().take(HASH_BYTES).cloned().collect();
+        let hash = Hash::from_le_bytes(hash_bytes.try_into().unwrap());
 
-        // Some indicies
-        let record_hash_start = RECORD_HEADER_BYTES;
-        let record_value_header_start = record_hash_start + HASH_BYTES;
-        let record_value_start = record_value_header_start + RECORD_VALUE_HEADER_BYTES;
+        let value_header_bytes: Vec<u8> = bytes
+            .by_ref()
+            .take(RECORD_VALUE_HEADER_BYTES)
+            .cloned()
+            .collect();
+        let value_len = RecordValueLength::from_le_bytes(value_header_bytes.try_into().unwrap());
 
-        let hash = Hash::from_le_bytes(
-            bytes[record_hash_start..record_value_header_start]
-                .try_into()
-                .unwrap(),
-        );
-        let len = RecordValueLength::from_le_bytes(
-            bytes[record_value_header_start..record_value_start]
-                .try_into()
-                .unwrap(),
-        );
-        let value = bytes[record_value_start..(record_value_start + len as usize)].to_owned();
-        Ok((
-            Record(hash, value),
-            &bytes[(record_value_start + len as usize)..],
-        ))
+        let value: Vec<u8> = bytes.by_ref().take(value_len as usize).cloned().collect();
+        return Ok((Record(hash, value), bytes));
     }
 }
 
@@ -623,7 +654,7 @@ mod test_record {
     fn into_and_from_bytes() {
         let r = Record(0b_1110, vec![25, 236, 36, 46]);
         let bytes = r.clone().into_bytes();
-        let (r_, bs) = Record::parse_from_bytes(&bytes).unwrap();
+        let (r_, bs) = Record::from_bytes(bytes.iter(), ()).unwrap();
         assert_eq!(r_, r);
         assert_eq!(bs.len(), 0);
     }
