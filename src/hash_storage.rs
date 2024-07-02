@@ -491,37 +491,6 @@ where
 }
 
 impl Bucket {
-    fn parse_from_bytes(bytes: &[u8], bucket_index: BucketIndexType) -> Result<(Self, &[u8]), ()> {
-        let mut page = &bytes[0..PAGE_BYTES];
-        // TODO: Refactor this to not always be depedent on u8
-        let level = page[0];
-        page = &page[1..];
-        let mut records = vec![];
-
-        let mut page = page.iter().peekable();
-
-        while let Some(x) = page.peek() {
-            if **x == 0 {
-                page.next();
-                continue;
-            }
-            let (record, rest_page) = Record::from_bytes(page, ()).unwrap();
-            records.push(record);
-            page = rest_page;
-        }
-
-        let mut bucket = Bucket {
-            bucket_index,
-            level,
-            records,
-            remaining_byte_space: 0,
-        };
-
-        bucket.update_remaining_byte_count();
-
-        Ok((bucket, &bytes[PAGE_BYTES..]))
-    }
-
     fn update_remaining_byte_count(&mut self) {
         let records_byte_len: usize = self.records.iter().map(|r| r.byte_len()).sum();
         self.remaining_byte_space = PAGE_BYTES - BUCKET_HEADER_BYTES - records_byte_len
@@ -638,39 +607,10 @@ impl Record {
     fn byte_len(&self) -> usize {
         RECORD_HEADER_BYTES + HASH_BYTES + RECORD_VALUE_HEADER_BYTES + self.1.len()
     }
-
-    // fn parse_from_bytes(bytes: &[u8]) -> Result<(Self, &[u8]), ()> {
-    //     if bytes[0] != 1 {
-    //         return Err(());
-    //     }
-
-    //     // Some indicies
-    //     let record_hash_start = RECORD_HEADER_BYTES;
-    //     let record_value_header_start = record_hash_start + HASH_BYTES;
-    //     let record_value_start = record_value_header_start + RECORD_VALUE_HEADER_BYTES;
-
-    //     let hash = Hash::from_le_bytes(
-    //         bytes[record_hash_start..record_value_header_start]
-    //             .try_into()
-    //             .unwrap(),
-    //     );
-    //     let len = RecordValueLength::from_le_bytes(
-    //         bytes[record_value_header_start..record_value_start]
-    //             .try_into()
-    //             .unwrap(),
-    //     );
-    //     let value = bytes[record_value_start..(record_value_start + len as usize)].to_owned();
-    //     Ok((
-    //         Record(hash, value),
-    //         &bytes[(record_value_start + len as usize)..],
-    //     ))
-    // }
 }
 
 impl<'a, T> ParseFromBytes<T> for Record
 where
-    // From bench marking there is a slight overhead with using iterators over slices
-    // But idc lol, its not the point of this project
     T: Iterator<Item = &'a u8>,
 {
     type Error = ();
