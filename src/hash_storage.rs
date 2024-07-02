@@ -3,7 +3,6 @@ use crate::command::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
 use std::io::SeekFrom;
-use std::iter::Peekable;
 use std::mem::size_of;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -452,19 +451,42 @@ pub struct Bucket {
 /// The length of the bucket header in bytes
 const BUCKET_HEADER_BYTES: usize = BUCKET_LEVEL_BYTES;
 
-impl<'a, T> ParseFromBytes<Peekable<T>> for Bucket
+impl<'a, T> ParseFromBytes<T> for Bucket
 where
     T: Iterator<Item = &'a u8>,
 {
     type Error = ();
 
-    type Metadata = BucketLevel;
+    type Metadata = BucketIndexType;
 
-    fn from_bytes(
-        bytes: Peekable<T>,
-        metadata: Self::Metadata,
-    ) -> Result<(Self, Peekable<T>), Self::Error> {
-        todo!()
+    fn from_bytes(mut bytes: T, bucket_index: Self::Metadata) -> Result<(Self, T), Self::Error> {
+        let page: [u8; PAGE_BYTES] = take_bytes_from_iterator(&mut bytes);
+        let mut page = page.iter().peekable();
+
+        let level_bytes: [u8; BUCKET_LEVEL_BYTES] = take_bytes_from_iterator(&mut page);
+        let level = BucketLevel::from_le_bytes(level_bytes.try_into().unwrap());
+        let mut records = vec![];
+
+        while let Some(x) = page.peek() {
+            if **x == 0 {
+                page.next();
+                continue;
+            }
+            let (record, rest_page) = Record::from_bytes(page, ()).unwrap();
+            records.push(record);
+            page = rest_page;
+        }
+
+        let mut bucket = Bucket {
+            bucket_index,
+            level,
+            records,
+            remaining_byte_space: 0,
+        };
+
+        bucket.update_remaining_byte_count();
+
+        Ok((bucket, bytes))
     }
 }
 
@@ -513,7 +535,7 @@ impl Bucket {
         .unwrap();
         let mut buf = [0; PAGE_BYTES];
         file.read_exact(&mut buf).await.unwrap();
-        let (bucket, _) = Self::parse_from_bytes(&buf, bucket_index).unwrap();
+        let (bucket, _) = Self::from_bytes(buf.iter(), bucket_index).unwrap();
         bucket
     }
 
