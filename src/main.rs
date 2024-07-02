@@ -12,6 +12,6 @@ async fn main() {
     if is_repl {
         run_repl().await;
     } else {
-        process_script_from_stdin().await;
+        process_from_stdin().await;
     }
 }

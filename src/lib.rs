@@ -12,12 +12,13 @@ mod setup;
 mod execute;
 mod storage;
 mod parse;
-mod script;
+mod stdin;
 mod hash_storage;
 mod bytes;
+mod handle_command;
 
 // Queue of commands
 // Takes in commands and executes them
 
 pub use repl::*;
-pub use script::*;
+pub use stdin::*;

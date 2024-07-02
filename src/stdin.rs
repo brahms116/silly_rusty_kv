@@ -6,22 +6,22 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 
-pub async fn process_script_from_stdin() {
+pub async fn process_from_stdin() {
     let (send, mut recv) = mpsc::channel::<String>(100);
     let (ctlrs, mut ctlrc) = oneshot::channel::<()>();
 
     let read_task = tokio::spawn(async move {
-        read_line_from_script(BufReader::new(stdin()), &send).await;
+        read_line_from_stdin(BufReader::new(stdin()), &send).await;
     });
 
     let process_task = tokio::spawn(async move {
-        process_lines_from_script(&mut recv, &mut ctlrc).await;
+        process_lines_from_stdin(&mut recv, &mut ctlrc).await;
     });
 
     tokio::try_join!(read_task, process_task).unwrap();
 }
 
-async fn process_lines_from_script(
+async fn process_lines_from_stdin(
     reciever: &mut mpsc::Receiver<String>,
     ctlrc_signal: &mut oneshot::Receiver<()>,
 ) {
@@ -34,7 +34,7 @@ async fn process_lines_from_script(
     execute_user_input(&mut storage, &mut hash_storage, Some("EXIT".to_string())).await;
 }
 
-async fn read_line_from_script<R: AsyncRead + Unpin>(
+async fn read_line_from_stdin<R: AsyncRead + Unpin>(
     reader: BufReader<R>,
     send: &mpsc::Sender<String>,
 ) {
