@@ -1,4 +1,4 @@
-use crate::bytes::ParseFromBytes;
+use crate::bytes::{ByteLength, ParseFromBytes};
 use crate::command::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
@@ -603,7 +603,9 @@ impl Record {
         result.extend(self.1);
         return result;
     }
+}
 
+impl ByteLength for Record {
     fn byte_len(&self) -> usize {
         RECORD_HEADER_BYTES + HASH_BYTES + RECORD_VALUE_HEADER_BYTES + self.1.len()
     }
