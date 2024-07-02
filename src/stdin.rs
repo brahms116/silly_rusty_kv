@@ -37,10 +37,10 @@ async fn process_lines_from_stdin(
             _ = &mut *ctlrc_signal => {
                 break;
             }
-            _ = execute_user_input(&mut storage, Some(line)) => {}
+            _ = execute_user_input(&mut storage, &line) => {}
         }
     }
-    execute_user_input(&mut storage, Some("EXIT".to_string())).await;
+    execute_user_input(&mut storage, &"EXIT").await;
 }
 
 async fn read_line_from_stdin<R: AsyncRead + Unpin>(

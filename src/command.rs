@@ -232,8 +232,8 @@ impl IntoBytes for Mutation {
 pub enum CommandOutput {
     NotFound(String),
     Found(String),
-    PUT,
-    DELETE,
+    Put,
+    Delete,
     Exit,
 }
 

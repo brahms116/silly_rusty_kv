@@ -26,15 +26,8 @@ pub async fn run_repl() {
     std::process::exit(0);
 }
 
-pub async fn execute_user_input(
-    storage: &mut HashStorage,
-    input: Option<String>,
-) -> bool {
-    if let None = input {
-        return true;
-    }
-
-    let cmd = input.unwrap().parse::<Command>();
+pub async fn execute_user_input(storage: &mut HashStorage, input: &str) -> bool {
+    let cmd = input.parse::<Command>();
 
     if let Err(err) = cmd {
         println!("Error: {}", err);
@@ -47,20 +40,20 @@ pub async fn execute_user_input(
     return false;
 }
 
-async fn inner_loop(
-    storage: &mut HashStorage,
-    receiver: &mut Receiver<()>,
-) -> bool {
+async fn inner_loop(storage: &mut HashStorage, receiver: &mut Receiver<()>) -> bool {
     let mut reader = BufReader::new(stdin()).lines();
 
     select! {
         _ = receiver => {
             // TODO: Handle reciever error
             println!("Received ctrl-c");
-            return execute_user_input(storage, Some("EXIT".into())).await;
+            return execute_user_input(storage, &"EXIT").await;
         }
         input = reader.next_line() => {
-            return execute_user_input(storage, input.unwrap()).await;
+            if let Some(input) = input.unwrap() {
+                return execute_user_input(storage, &input).await;
+            }
+            return true
         }
     }
 }

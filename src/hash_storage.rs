@@ -235,13 +235,18 @@ impl HashStorage {
         }
     }
 
-    pub async fn handle_cmd(&mut self, cmd: Command) -> Result<Option<String>, ()> {
+    pub async fn handle_cmd(&mut self, cmd: Command) -> Result<CommandOutput, ()> {
         match cmd {
-            Command::Put(cmd) => self
-                .put(Record(hash_string_key(&cmd.0), cmd.1.into_bytes()))
-                .await
-                .unwrap(),
-            Command::Delete(cmd) => self.delete(cmd).await.unwrap(),
+            Command::Put(cmd) => {
+                self.put(Record(hash_string_key(&cmd.0), cmd.1.into_bytes()))
+                    .await
+                    .unwrap();
+                Ok(CommandOutput::Put)
+            }
+            Command::Delete(cmd) => {
+                self.delete(cmd).await.unwrap();
+                Ok(CommandOutput::Delete)
+            }
             Command::Get(cmd) => {
                 if let Some(value) = self
                     .get(hash_string_key(&cmd.0))
@@ -250,14 +255,17 @@ impl HashStorage {
                     .map(|x| String::from_utf8(x).unwrap())
                 {
                     println!("{}", value);
-                    return Ok(Some(value));
+                    return Ok(CommandOutput::Found(value));
                 } else {
                     println!("Key not found");
+                    return Ok(CommandOutput::NotFound(cmd.0));
                 }
             }
-            Command::Exit => self.exit().await,
+            Command::Exit => {
+                self.exit().await;
+                Ok(CommandOutput::Exit)
+            }
         }
-        Ok(None)
     }
 
     async fn exit(&mut self) {
@@ -686,23 +694,15 @@ mod test_hash_storage {
         let get_cmd = GetCommand("MY_KEY".into());
 
         engine.handle_cmd(cmd.clone().into()).await.unwrap();
-        let retrieved = engine
-            .handle_cmd(get_cmd.clone().into())
-            .await
-            .unwrap()
-            .unwrap();
+        let retrieved = engine.handle_cmd(get_cmd.clone().into()).await.unwrap();
 
-        assert_eq!(retrieved, "MY_VALUE");
+        assert_eq!(retrieved, CommandOutput::Found("MY_VALUE".into()));
 
         let cmd = PutCommand("MY_KEY".into(), "MY_VALUE2".into());
         engine.handle_cmd(cmd.clone().into()).await.unwrap();
-        let retrieved = engine
-            .handle_cmd(get_cmd.clone().into())
-            .await
-            .unwrap()
-            .unwrap();
+        let retrieved = engine.handle_cmd(get_cmd.clone().into()).await.unwrap();
 
-        assert_eq!(retrieved, "MY_VALUE2");
+        assert_eq!(retrieved, CommandOutput::Found("MY_VALUE2".into()));
 
         engine
             .handle_cmd(DeleteCommand("MY_KEY".into()).into())
@@ -710,7 +710,7 @@ mod test_hash_storage {
             .unwrap();
 
         let retrieved = engine.handle_cmd(get_cmd.clone().into()).await.unwrap();
-        assert_eq!(retrieved, None);
+        assert_eq!(retrieved, CommandOutput::NotFound("MY_KEY".into()));
     }
 
     /// Simulate a scenario as the following:
