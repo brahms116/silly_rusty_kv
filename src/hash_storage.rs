@@ -1,4 +1,4 @@
-use crate::bytes::{ByteLength, ParseFromBytes};
+use crate::bytes::{ByteLength, IntoBytes, ParseFromBytes};
 use crate::command::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
@@ -594,7 +594,7 @@ const RECORD_VALUE_HEADER_BYTES: usize = size_of::<RecordValueLength>();
 const MAX_HASH_VALUE_BYTES: usize =
     PAGE_BYTES - BUCKET_HEADER_BYTES - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
 
-impl Record {
+impl IntoBytes for Record {
     fn into_bytes(self) -> Vec<u8> {
         let mut result = vec![];
         result.push(RECORD_HEADER);
