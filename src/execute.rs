@@ -6,7 +6,6 @@ pub async fn execute_command(
     cmd: Command,
     storage: &mut StorageEngine,
     hash_storage: &mut HashStorage,
-    out_stream: (),
 ) {
     // storage.handle_cmd(cmd, out_stream).await.unwrap();
     hash_storage.handle_cmd(cmd).await.unwrap();

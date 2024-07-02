@@ -43,8 +43,7 @@ pub async fn execute_user_input(
     } else if let Ok(cmd) = cmd {
         let should_quit = cmd == Command::Exit;
         // execute command
-        let out_stream = ();
-        execute_command(cmd.clone(), storage, hash_storage, out_stream).await;
+        execute_command(cmd.clone(), storage, hash_storage).await;
         return should_quit;
     }
     return false;
