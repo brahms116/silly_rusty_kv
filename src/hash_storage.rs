@@ -3,6 +3,7 @@ use crate::command::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
 use std::io::SeekFrom;
+use std::iter::Peekable;
 use std::mem::size_of;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -441,6 +442,22 @@ pub struct Bucket {
 /// The length of the bucket header in bytes
 const BUCKET_HEADER_BYTES: usize = BUCKET_LEVEL_BYTES;
 
+impl<'a, T> ParseFromBytes<Peekable<T>> for Bucket
+where
+    T: Iterator<Item = &'a u8>,
+{
+    type Error = ();
+
+    type Metadata = BucketLevel;
+
+    fn from_bytes(
+        bytes: Peekable<T>,
+        metadata: Self::Metadata,
+    ) -> Result<(Self, Peekable<T>), Self::Error> {
+        todo!()
+    }
+}
+
 impl Bucket {
     fn parse_from_bytes(bytes: &[u8], bucket_index: BucketIndexType) -> Result<(Self, &[u8]), ()> {
         let mut page = &bytes[0..PAGE_BYTES];
@@ -618,8 +635,10 @@ impl Record {
     // }
 }
 
-impl<'a, T> ParseFromBytes<'a, T> for Record
+impl<'a, T> ParseFromBytes<T> for Record
 where
+    // From bench marking there is a slight overhead with using iterators over slices
+    // But idc lol, its not the point of this project
     T: Iterator<Item = &'a u8>,
 {
     type Error = ();
