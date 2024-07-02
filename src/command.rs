@@ -26,7 +26,7 @@ impl IntoBytes for PutCommand {
 /// Value length -> u16,
 /// Key -> String,
 /// Value -> String
-impl<'a, T> ParseFromBytes<'a, T> for PutCommand
+impl<'a, T> ParseFromBytes<T> for PutCommand
 where
     T: Iterator<Item = &'a u8>,
 {
@@ -45,7 +45,7 @@ where
     }
 }
 
-impl<'a, T> ParseFromBytes<'a, T> for DeleteCommand
+impl<'a, T> ParseFromBytes<T> for DeleteCommand
 where
     T: Iterator<Item = &'a u8>,
 {
@@ -60,7 +60,7 @@ where
     }
 }
 
-impl<'a, T> ParseFromBytes<'a, T> for Mutation
+impl<'a, T> ParseFromBytes<T> for Mutation
 where
     T: Iterator<Item = &'a u8> + Clone,
 {
