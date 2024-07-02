@@ -8,6 +8,16 @@ use std::mem::size_of;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
+fn take_bytes_from_iterator<'a, T: Iterator<Item = &'a u8>, const N: usize>(
+    bytes: &mut T,
+) -> [u8; N] {
+    let mut buf = [0; N];
+    for i in 0..N {
+        buf[i] = *bytes.next().unwrap();
+    }
+    buf
+}
+
 /// Number of bytes in a page
 const PAGE_BYTES: usize = 4096;
 
@@ -645,19 +655,18 @@ where
     type Metadata = ();
 
     fn from_bytes(mut bytes: T, metadata: ()) -> Result<(Self, T), Self::Error> {
-        let header_bytes: Vec<u8> = bytes.by_ref().take(RECORD_HEADER_BYTES).cloned().collect();
+        let header_bytes: [u8; RECORD_HEADER_BYTES] = take_bytes_from_iterator(&mut bytes);
         let header = RecordHeader::from_le_bytes(header_bytes.try_into().unwrap());
         if header != RECORD_HEADER {
             return Err(());
         }
-        let hash_bytes: Vec<u8> = bytes.by_ref().take(HASH_BYTES).cloned().collect();
+
+        let hash_bytes: [u8; HASH_BYTES] = take_bytes_from_iterator(&mut bytes);
         let hash = Hash::from_le_bytes(hash_bytes.try_into().unwrap());
 
-        let value_header_bytes: Vec<u8> = bytes
-            .by_ref()
-            .take(RECORD_VALUE_HEADER_BYTES)
-            .cloned()
-            .collect();
+        let value_header_bytes: [u8; RECORD_VALUE_HEADER_BYTES] =
+            take_bytes_from_iterator(&mut bytes);
+
         let value_len = RecordValueLength::from_le_bytes(value_header_bytes.try_into().unwrap());
 
         let value: Vec<u8> = bytes.by_ref().take(value_len as usize).cloned().collect();
