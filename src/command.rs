@@ -229,6 +229,15 @@ impl IntoBytes for Mutation {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum CommandOutput {
+    NotFound(String),
+    Found(String),
+    PUT,
+    DELETE,
+    Exit,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Put(PutCommand),
     Delete(DeleteCommand),
