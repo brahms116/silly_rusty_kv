@@ -31,16 +31,16 @@ async fn process_lines_from_stdin(
     reciever: &mut mpsc::Receiver<String>,
     ctlrc_signal: &mut oneshot::Receiver<()>,
 ) {
-    let (mut storage, mut hash_storage) = setup_db().await;
+    let mut storage = setup_db().await;
     while let Some(line) = reciever.recv().await {
         select! {
             _ = &mut *ctlrc_signal => {
                 break;
             }
-            _ = execute_user_input(&mut storage, &mut hash_storage, Some(line)) => {}
+            _ = execute_user_input(&mut storage, Some(line)) => {}
         }
     }
-    execute_user_input(&mut storage, &mut hash_storage, Some("EXIT".to_string())).await;
+    execute_user_input(&mut storage, Some("EXIT".to_string())).await;
 }
 
 async fn read_line_from_stdin<R: AsyncRead + Unpin>(
