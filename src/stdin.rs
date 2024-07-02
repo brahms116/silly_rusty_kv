@@ -1,6 +1,7 @@
 use crate::repl::*;
 use crate::setup::*;
 
+use tokio::select;
 use tokio::{
     io::{stdin, AsyncBufReadExt, AsyncRead, BufReader},
     sync::{mpsc, oneshot},
@@ -9,6 +10,11 @@ use tokio::{
 pub async fn process_from_stdin() {
     let (send, mut recv) = mpsc::channel::<String>(100);
     let (ctlrs, mut ctlrc) = oneshot::channel::<()>();
+
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.unwrap();
+        ctlrs.send(()).unwrap();
+    });
 
     let read_task = tokio::spawn(async move {
         read_line_from_stdin(BufReader::new(stdin()), &send).await;
@@ -25,11 +31,14 @@ async fn process_lines_from_stdin(
     reciever: &mut mpsc::Receiver<String>,
     ctlrc_signal: &mut oneshot::Receiver<()>,
 ) {
-    // TODO: Need to handle the ctlrc_signal
-
     let (mut storage, mut hash_storage) = setup_db().await;
     while let Some(line) = reciever.recv().await {
-        execute_user_input(&mut storage, &mut hash_storage, Some(line)).await;
+        select! {
+            _ = &mut *ctlrc_signal => {
+                break;
+            }
+            _ = execute_user_input(&mut storage, &mut hash_storage, Some(line)) => {}
+        }
     }
     execute_user_input(&mut storage, &mut hash_storage, Some("EXIT".to_string())).await;
 }
