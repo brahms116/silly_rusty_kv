@@ -2,10 +2,17 @@ use crate::hash_storage::HashStorage;
 
 use super::command::*;
 
-pub async fn execute_command(
-    cmd: Command,
+pub async fn execute_user_input(
     storage: &mut HashStorage,
-) {
-    // storage.handle_cmd(cmd, out_stream).await.unwrap();
-    storage.handle_cmd(cmd).await.unwrap();
+    input: &str,
+) -> Result<CommandOutput, String> {
+    let cmd = input.parse::<Command>()?;
+    // execute command
+    execute_command(storage, cmd.clone())
+        .await
+        .map_err(|_| "Error executing command".to_string())
+}
+
+pub async fn execute_command(storage: &mut HashStorage, cmd: Command) -> Result<CommandOutput, ()> {
+    storage.handle_cmd(cmd).await
 }

@@ -1,5 +1,6 @@
 use crate::bytes::*;
 use crate::parse::*;
+use std::fmt::Display;
 use std::str::FromStr;
 
 impl IntoBytes for PutCommand {
@@ -235,6 +236,18 @@ pub enum CommandOutput {
     Put,
     Delete,
     Exit,
+}
+
+impl Display for CommandOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Exit => write!(f, "Bye"),
+            Self::Put => write!(f, "Put"),
+            Self::Delete => write!(f, "Delete"),
+            Self::Found(value) => write!(f, "{}", value),
+            Self::NotFound(_) => write!(f, "Key not found"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

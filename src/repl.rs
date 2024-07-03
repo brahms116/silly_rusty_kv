@@ -1,5 +1,5 @@
 use crate::hash_storage::HashStorage;
-use crate::{execute::execute_command, setup::setup_db};
+use crate::{execute::*, setup::setup_db};
 use tokio::io::{stdin, AsyncBufReadExt, BufReader};
 use tokio::select;
 use tokio::sync::oneshot::{channel, Receiver};
@@ -26,20 +26,6 @@ pub async fn run_repl() {
     std::process::exit(0);
 }
 
-pub async fn execute_user_input(storage: &mut HashStorage, input: &str) -> bool {
-    let cmd = input.parse::<Command>();
-
-    if let Err(err) = cmd {
-        println!("Error: {}", err);
-    } else if let Ok(cmd) = cmd {
-        let should_quit = cmd == Command::Exit;
-        // execute command
-        execute_command(cmd.clone(), storage).await;
-        return should_quit;
-    }
-    return false;
-}
-
 async fn inner_loop(storage: &mut HashStorage, receiver: &mut Receiver<()>) -> bool {
     let mut reader = BufReader::new(stdin()).lines();
 
@@ -47,11 +33,20 @@ async fn inner_loop(storage: &mut HashStorage, receiver: &mut Receiver<()>) -> b
         _ = receiver => {
             // TODO: Handle reciever error
             println!("Received ctrl-c");
-            return execute_user_input(storage, &"EXIT").await;
+            let output = execute_command(storage, Command::Exit).await.unwrap();
+            match output {
+                CommandOutput::Exit => return true,
+                _ => return false
+            }
         }
         input = reader.next_line() => {
             if let Some(input) = input.unwrap() {
-                return execute_user_input(storage, &input).await;
+                let output = execute_user_input(storage, &input).await.unwrap();
+                println!("{}", output);
+                match output {
+                    CommandOutput::Exit => return true,
+                    _ => return false
+                }
             }
             return true
         }

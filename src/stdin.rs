@@ -1,4 +1,5 @@
-use crate::repl::*;
+use crate::command::Command;
+use crate::execute::*;
 use crate::setup::*;
 
 use tokio::select;
@@ -37,10 +38,13 @@ async fn process_lines_from_stdin(
             _ = &mut *ctlrc_signal => {
                 break;
             }
-            _ = execute_user_input(&mut storage, &line) => {}
+            output = execute_user_input(&mut storage, &line) => {
+                let output = output.unwrap();
+                println!("{}", output);
+            }
         }
     }
-    execute_user_input(&mut storage, &"EXIT").await;
+    execute_command(&mut storage, Command::Exit).await.unwrap();
 }
 
 async fn read_line_from_stdin<R: AsyncRead + Unpin>(

@@ -254,10 +254,8 @@ impl HashStorage {
                     .unwrap()
                     .map(|x| String::from_utf8(x).unwrap())
                 {
-                    println!("{}", value);
                     return Ok(CommandOutput::Found(value));
                 } else {
-                    println!("Key not found");
                     return Ok(CommandOutput::NotFound(cmd.0));
                 }
             }
