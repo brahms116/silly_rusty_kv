@@ -6,6 +6,7 @@
 mod test;
 
 mod consts;
+mod server;
 mod command;
 mod repl;
 mod setup;
@@ -18,3 +19,4 @@ mod bytes;
 
 pub use repl::*;
 pub use stdin::*;
+pub use server::*;

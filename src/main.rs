@@ -1,17 +1,27 @@
 use silly_rusty_kv::*;
 
+enum Mode {
+    Repl,
+    Stdin,
+    Server,
+}
+
 #[tokio::main]
 async fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let is_repl = if let Some(arg) = args.get(1) {
-        arg == "--repl"
-    } else {
-        false
-    };
+    let mut mode = Mode::Server;
 
-    if is_repl {
-        run_repl().await;
-    } else {
-        process_from_stdin().await;
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(arg) = args.get(1) {
+        match arg as &str {
+            "--repl" => mode = Mode::Repl,
+            "--stdin" => mode = Mode::Stdin,
+            _ => {}
+        }
+    }
+
+    match mode {
+        Mode::Repl => run_repl().await,
+        Mode::Stdin => process_from_stdin().await,
+        Mode::Server => run_server().await,
     }
 }
