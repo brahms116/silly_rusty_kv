@@ -33,7 +33,7 @@ async fn inner_loop(storage: &mut HashStorage, receiver: &mut Receiver<()>) -> b
         _ = receiver => {
             // TODO: Handle reciever error
             println!("Received ctrl-c");
-            let output = execute_command(storage, StorageCommand::Flush).await.unwrap();
+            let output = execute_storage_command(storage, StorageCommand::Flush).await.unwrap();
             match output {
                 CommandOutput::Exit => return true,
                 _ => return false

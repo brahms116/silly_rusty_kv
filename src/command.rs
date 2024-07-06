@@ -286,7 +286,7 @@ impl From<DeleteCommand> for StorageCommand {
     }
 }
 
-impl FromStr for StorageCommand {
+impl FromStr for UserCommand {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         parse_command(s.to_string())

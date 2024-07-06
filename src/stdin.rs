@@ -44,7 +44,7 @@ async fn process_lines_from_stdin(
             }
         }
     }
-    execute_command(&mut storage, StorageCommand::Flush).await.unwrap();
+    execute_storage_command(&mut storage, StorageCommand::Flush).await.unwrap();
 }
 
 async fn read_line_from_stdin<R: AsyncRead + Unpin>(
