@@ -23,11 +23,13 @@ Commands include:
 -   [x] Implment a hash storage engine for the database
     -   [x] What performance impacts does this have?
             Turns out it's fast because I don't call fsync, but if I do, it slows down significantly
--   [ ] Impelment a server client thingo so I can keep the
+-   [x] Impelment a server client thingo so I can keep the
         database running different commands for it
-    -   [ ] Make distinct modes in running the db, repl, stdin etc
-    -   [ ] Implement the tcp endpoint
+    -   [x] Make distinct modes in running the db, repl, stdin etc
+    -   [x] Implement the tcp endpoint
 -   [ ] Implement a in memory WAL for the database
     -  [ ] Implement the transaction command
            This will need a new type, splitting the current command into control and non-control
+-   [ ] Make it possible to close the database from the client tcp socket instead of ignoring the EXIT command
+-   [ ] Work on cleanup from signals
 -   [ ] Refactor the legacy appendonly thing to contain use the in memory WAL and the hash table as an index
