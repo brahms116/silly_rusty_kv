@@ -235,7 +235,7 @@ impl HashStorage {
         }
     }
 
-    pub async fn handle_cmd(&mut self, cmd: StorageCommand) -> Result<CommandOutput, ()> {
+    pub async fn handle_cmd(&mut self, cmd: StorageCommand) -> Result<CommandOutput, String> {
         match cmd {
             StorageCommand::Put(cmd) => {
                 self.put(Record(hash_string_key(&cmd.0), cmd.1.into_bytes()))

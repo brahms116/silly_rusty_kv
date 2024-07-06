@@ -49,6 +49,7 @@ async fn inner_loop(
             if let Some(input) = input.unwrap() {
                 let output = execute_user_input(storage, wal, &input, transaction_id.as_deref()).await;
                 if let Ok(output) = output {
+                    println!("{}", output);
                     handle_command_output_for_transaction_id(&output, transaction_id);
                     match output {
                         CommandOutput::Exit => return true,
