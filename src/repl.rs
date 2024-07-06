@@ -41,11 +41,16 @@ async fn inner_loop(storage: &mut HashStorage, receiver: &mut Receiver<()>) -> b
         }
         input = reader.next_line() => {
             if let Some(input) = input.unwrap() {
-                let output = execute_user_input(storage, &input).await.unwrap();
-                println!("{}", output);
-                match output {
-                    CommandOutput::Exit => return true,
-                    _ => return false
+                let output = execute_user_input(storage, &input).await;
+                if let Ok(output) = output {
+                    println!("{}", output);
+                    match output {
+                        CommandOutput::Exit => return true,
+                        _ => return false
+                    }
+                } else {
+                    let output = output.unwrap_err();
+                    println!("{}", output);
                 }
             }
             return true

@@ -39,7 +39,7 @@ async fn process_lines_from_stdin(
                 break;
             }
             output = execute_user_input(&mut storage, &line) => {
-                let output = output.unwrap();
+                let output = output.map_or_else(|e| e, |o| o.to_string());
                 println!("{}", output);
             }
         }
