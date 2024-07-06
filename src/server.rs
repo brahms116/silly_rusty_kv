@@ -5,7 +5,10 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     select,
-    signal::ctrl_c,
+    signal::{
+        ctrl_c,
+        unix::{signal, SignalKind},
+    },
     spawn,
     sync::mpsc::{channel, Receiver, Sender},
     sync::oneshot::{channel as one_channel, Receiver as OneReceiver, Sender as OneSender},
@@ -21,7 +24,12 @@ pub async fn run_server() {
     let (breaklooprs, mut breaklooprc) = one_channel::<()>();
 
     spawn(async move {
-        ctrl_c().await.unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        select! {
+            _ = sigterm.recv() => {},
+            _ = ctrl_c() => {}
+        }
+
         ctlrs.send(()).unwrap();
         breaklooprs.send(()).unwrap();
     });
@@ -50,9 +58,10 @@ async fn handle_socket(s: TcpStream, send: &Sender<SendLine>) {
     let (r, mut w) = s.into_split();
     let mut lines = BufReader::new(r).lines();
     while let Some(line) = lines.next_line().await.unwrap() {
+        println!("Received: {}", line);
         let (s, res) = one_channel::<String>();
         send.send(SendLine { line, cb: s }).await.unwrap();
-        let output = res.await.unwrap();
+        let output = format!("{}\n", res.await.unwrap());
         w.write_all(&output.into_bytes()).await.unwrap();
     }
 }
