@@ -1,4 +1,4 @@
-use crate::command::StorageCommand;
+use crate::command::*;
 use crate::execute::*;
 use crate::setup::*;
 
@@ -32,19 +32,27 @@ async fn process_lines_from_stdin(
     reciever: &mut mpsc::Receiver<String>,
     ctlrc_signal: &mut oneshot::Receiver<()>,
 ) {
-    let mut storage = setup_db().await;
+    let (mut storage, mut wal) = setup_db().await;
+    let mut transaction_id = None;
     while let Some(line) = reciever.recv().await {
         select! {
             _ = &mut *ctlrc_signal => {
                 break;
             }
-            output = execute_user_input(&mut storage, &line) => {
-                let output = output.map_or_else(|e| e, |o| o.to_string());
-                println!("{}", output);
+            output = execute_user_input(&mut storage, &mut wal, &line, transaction_id.as_deref()) => {
+                match output {
+                    Ok(output) => {
+                        handle_command_output_for_transaction_id(&output, &mut transaction_id);
+                        println!("{}", output);
+                    },
+                    Err(e) => {println!("{}", e)}
+                }
             }
         }
     }
-    execute_storage_command(&mut storage, StorageCommand::Flush).await.unwrap();
+    execute_command(&mut storage, &mut wal, UserCommand::Exit, None)
+        .await
+        .unwrap();
 }
 
 async fn read_line_from_stdin<R: AsyncRead + Unpin>(

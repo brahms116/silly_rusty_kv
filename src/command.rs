@@ -241,14 +241,16 @@ pub enum CommandOutput {
     Begin(String),
 }
 
-pub fn handle_comamnd_output_for_transaction_id(
+pub fn handle_command_output_for_transaction_id(
     output: &CommandOutput,
-    existing: Option<String>,
-) -> Option<String> {
+    existing: &mut Option<String>,
+) {
     match output {
         // Cheap clone?
-        CommandOutput::Begin(s) => Some(s.to_string()),
-        _ => existing,
+        CommandOutput::Begin(s) => *existing = Some(s.clone()),
+        CommandOutput::Rollback => *existing = None,
+        CommandOutput::Commit => *existing = None,
+        _ => {},
     }
 }
 

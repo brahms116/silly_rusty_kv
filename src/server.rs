@@ -57,30 +57,42 @@ pub async fn run_server() {
 async fn handle_socket(s: TcpStream, send: &Sender<SendLine>) {
     let (r, mut w) = s.into_split();
     let mut lines = BufReader::new(r).lines();
+    let mut t_id = None;
     while let Some(line) = lines.next_line().await.unwrap() {
         println!("Received: {}", line);
-        let (s, res) = one_channel::<String>();
-        send.send(SendLine { line, cb: s }).await.unwrap();
-        let output = format!("{}\n", res.await.unwrap());
-        w.write_all(&output.into_bytes()).await.unwrap();
+        let (s, res) = one_channel::<Result<CommandOutput, String>>();
+        send.send(SendLine {
+            line,
+            cb: s,
+            transaction_id: t_id.clone(),
+        })
+        .await
+        .unwrap();
+        let output = res.await.unwrap();
+        if let Ok(cmd_output) = output.as_ref() {
+            handle_command_output_for_transaction_id(cmd_output, &mut t_id);
+        }
+        let str_output = format!("{}\n", output.map_or_else(|e| e, |v| v.to_string()));
+        w.write_all(&str_output.into_bytes()).await.unwrap();
     }
 }
 
 pub struct SendLine {
     line: String,
-    cb: OneSender<String>,
+    cb: OneSender<Result<CommandOutput, String>>,
+    transaction_id: Option<String>,
 }
 
 async fn receive_line_single_thread(r: &mut Receiver<SendLine>, ctrlc: &mut OneReceiver<()>) {
-    let mut storage = setup_db().await;
+    let (mut storage, mut wal) = setup_db().await;
     loop {
         select! {
             _ = &mut *ctrlc => {
                 break;
             }
             msg = r.recv() => {
-                if let Some(SendLine {line, cb}) = msg {
-                   let output = execute_user_input(&mut storage, &line).await.map(|x| x.to_string()).unwrap_or_else(|e| e);
+                if let Some(SendLine {line, cb, transaction_id:t_id}) = msg {
+                   let output = execute_user_input(&mut storage, &mut wal, &line, t_id.as_deref()).await;
                    cb.send(output).unwrap();
                 } else {
                     break;
@@ -88,7 +100,7 @@ async fn receive_line_single_thread(r: &mut Receiver<SendLine>, ctrlc: &mut OneR
             }
         }
     }
-    execute_storage_command(&mut storage, StorageCommand::Flush)
+    execute_command(&mut storage, &mut wal, UserCommand::Exit, None)
         .await
         .unwrap();
 }
