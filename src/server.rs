@@ -88,5 +88,5 @@ async fn receive_line_single_thread(r: &mut Receiver<SendLine>, ctrlc: &mut OneR
             }
         }
     }
-    execute_command(&mut storage, Command::Exit).await.unwrap();
+    execute_command(&mut storage, StorageCommand::Flush).await.unwrap();
 }

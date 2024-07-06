@@ -235,19 +235,19 @@ impl HashStorage {
         }
     }
 
-    pub async fn handle_cmd(&mut self, cmd: Command) -> Result<CommandOutput, ()> {
+    pub async fn handle_cmd(&mut self, cmd: StorageCommand) -> Result<CommandOutput, ()> {
         match cmd {
-            Command::Put(cmd) => {
+            StorageCommand::Put(cmd) => {
                 self.put(Record(hash_string_key(&cmd.0), cmd.1.into_bytes()))
                     .await
                     .unwrap();
                 Ok(CommandOutput::Put)
             }
-            Command::Delete(cmd) => {
+            StorageCommand::Delete(cmd) => {
                 self.delete(cmd).await.unwrap();
                 Ok(CommandOutput::Delete)
             }
-            Command::Get(cmd) => {
+            StorageCommand::Get(cmd) => {
                 if let Some(value) = self
                     .get(hash_string_key(&cmd.0))
                     .await
@@ -259,7 +259,7 @@ impl HashStorage {
                     return Ok(CommandOutput::NotFound(cmd.0));
                 }
             }
-            Command::Exit => {
+            StorageCommand::Flush => {
                 self.exit().await;
                 Ok(CommandOutput::Exit)
             }
@@ -899,7 +899,7 @@ mod test_hash_storage {
         engine.global_level = 3;
         engine.bucket_count = 8;
 
-        engine.handle_cmd(Command::Exit).await.unwrap();
+        engine.handle_cmd(StorageCommand::Flush).await.unwrap();
 
         let engine_reloaded = get_engine_without_reset("hash_storage_exit_save_load").await;
 

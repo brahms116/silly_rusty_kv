@@ -1,6 +1,6 @@
-use crate::command::{Command, DeleteCommand, GetCommand, PutCommand};
+use crate::command::{StorageCommand, DeleteCommand, GetCommand, PutCommand};
 
-pub fn parse_command(input: String) -> Result<Command, String> {
+pub fn parse_command(input: String) -> Result<StorageCommand, String> {
     let tokens = Lexer::new(input).lex()?;
     parse_tokens(tokens.into_iter())
 }
@@ -128,7 +128,7 @@ impl Lexer {
     }
 }
 
-fn parse_tokens(mut tokens: impl Iterator<Item = Token>) -> Result<Command, String> {
+fn parse_tokens(mut tokens: impl Iterator<Item = Token>) -> Result<StorageCommand, String> {
     let next = tokens.next();
     if next.is_none() {
         return Err("Unexpected end of input".into());
@@ -139,7 +139,7 @@ fn parse_tokens(mut tokens: impl Iterator<Item = Token>) -> Result<Command, Stri
             Keyword::Get => process_get_keyword(&mut tokens),
             Keyword::Put => process_put_keyword(&mut tokens),
             Keyword::Delete => process_delete_keyword(&mut tokens),
-            Keyword::Exit => Ok(Command::Exit),
+            Keyword::Exit => Ok(StorageCommand::Flush),
         },
         _ => Err("Expected keyword GET, PUT or DELETE".into()),
     }
@@ -158,35 +158,35 @@ fn parse_identifier(
 fn process_put_keyword_with_key(
     ident: String,
     tokens: &mut impl Iterator<Item = Token>,
-) -> Result<Command, String> {
+) -> Result<StorageCommand, String> {
     match tokens.next() {
         Some(Token::Literal(literal)) => {
             if tokens.next().is_some() {
                 return Err("Unexpected token after literal".to_string());
             }
-            Ok(Command::Put(PutCommand(ident, literal)))
+            Ok(StorageCommand::Put(PutCommand(ident, literal)))
         }
         _ => Err("Expected literal after identifier".to_string()),
     }
 }
 
-fn process_put_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+fn process_put_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<StorageCommand, String> {
     let ident = parse_identifier(tokens, "PUT")?;
     process_put_keyword_with_key(ident, tokens)
 }
 
-fn process_get_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+fn process_get_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<StorageCommand, String> {
     let ident = parse_identifier(tokens, "GET")?;
     if tokens.next().is_some() {
         return Err("Unexpected token after identifier".to_string());
     }
-    Ok(Command::Get(GetCommand(ident)))
+    Ok(StorageCommand::Get(GetCommand(ident)))
 }
 
-fn process_delete_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<Command, String> {
+fn process_delete_keyword(tokens: &mut impl Iterator<Item = Token>) -> Result<StorageCommand, String> {
     let ident = parse_identifier(tokens, "DELETE")?;
     if tokens.next().is_some() {
         return Err("Unexpected token after identifier".to_string());
     }
-    Ok(Command::Delete(DeleteCommand(ident)))
+    Ok(StorageCommand::Delete(DeleteCommand(ident)))
 }

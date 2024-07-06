@@ -250,33 +250,43 @@ impl Display for CommandOutput {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Command {
+pub enum UserCommand {
     Put(PutCommand),
     Delete(DeleteCommand),
     Get(GetCommand),
     Exit,
+    Begin,
+    Commit,
+    Rollback,
 }
 
-impl From<PutCommand> for Command {
+#[derive(Debug, Clone, PartialEq)]
+pub enum StorageCommand {
+    Put(PutCommand),
+    Delete(DeleteCommand),
+    Get(GetCommand),
+    Flush,
+}
+
+impl From<PutCommand> for StorageCommand {
     fn from(value: PutCommand) -> Self {
         Self::Put(value)
     }
 }
 
-impl From<GetCommand> for Command {
+impl From<GetCommand> for StorageCommand {
     fn from(value: GetCommand) -> Self {
         Self::Get(value)
     }
 }
 
-impl From<DeleteCommand> for Command {
+impl From<DeleteCommand> for StorageCommand {
     fn from(value: DeleteCommand) -> Self {
         Self::Delete(value)
     }
 }
 
-impl FromStr for Command {
+impl FromStr for StorageCommand {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         parse_command(s.to_string())

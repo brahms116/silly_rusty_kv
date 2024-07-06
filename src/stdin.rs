@@ -1,4 +1,4 @@
-use crate::command::Command;
+use crate::command::StorageCommand;
 use crate::execute::*;
 use crate::setup::*;
 
@@ -44,7 +44,7 @@ async fn process_lines_from_stdin(
             }
         }
     }
-    execute_command(&mut storage, Command::Exit).await.unwrap();
+    execute_command(&mut storage, StorageCommand::Flush).await.unwrap();
 }
 
 async fn read_line_from_stdin<R: AsyncRead + Unpin>(
