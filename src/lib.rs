@@ -15,6 +15,7 @@ mod parse;
 mod stdin;
 mod hash_storage;
 mod bytes;
+mod wal;
 
 pub use repl::*;
 pub use stdin::*;

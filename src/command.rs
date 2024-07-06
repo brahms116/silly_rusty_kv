@@ -236,6 +236,20 @@ pub enum CommandOutput {
     Put,
     Delete,
     Exit,
+    Commit,
+    Rollback,
+    Begin(String),
+}
+
+pub fn handle_comamnd_output_for_transaction_id(
+    output: &CommandOutput,
+    existing: Option<String>,
+) -> Option<String> {
+    match output {
+        // Cheap clone?
+        CommandOutput::Begin(s) => Some(s.to_string()),
+        _ => existing,
+    }
 }
 
 impl Display for CommandOutput {
@@ -246,10 +260,14 @@ impl Display for CommandOutput {
             Self::Delete => write!(f, "Delete"),
             Self::Found(value) => write!(f, "{}", value),
             Self::NotFound(_) => write!(f, "Key not found"),
+            Self::Commit => write!(f, "Commit"),
+            Self::Rollback => write!(f, "Rollback"),
+            Self::Begin(_) => write!(f, "Begin"),
         }
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub enum UserCommand {
     Put(PutCommand),
     Delete(DeleteCommand),
