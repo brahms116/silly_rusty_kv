@@ -71,8 +71,8 @@ async fn receive_line_single_thread(r: &mut Receiver<SendLine>, ctrlc: &mut OneR
             }
             msg = r.recv() => {
                 if let Some(SendLine {line, cb}) = msg {
-                   let output = execute_user_input(&mut storage, &line).await.unwrap();
-                   cb.send(output.to_string()).unwrap();
+                   let output = execute_user_input(&mut storage, &line).await.map(|x| x.to_string()).unwrap_or_else(|e| e);
+                   cb.send(output).unwrap();
                 } else {
                     break;
                 }
