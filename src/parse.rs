@@ -11,6 +11,9 @@ enum Keyword {
     Put,
     Delete,
     Exit,
+    Begin,
+    Rollback,
+    Commit
 }
 
 #[derive(Debug)]
@@ -78,6 +81,15 @@ impl Lexer {
             "EXIT" | "exit" => {
                 self.tokens.push(Token::Keyword(Keyword::Exit));
             }
+            "BEGIN" | "begin" => {
+                self.tokens.push(Token::Keyword(Keyword::Begin));
+            }
+            "ROLLBACK" | "rollback" => {
+                self.tokens.push(Token::Keyword(Keyword::Rollback));
+            }
+            "COMMIT" | "commit" => {
+                self.tokens.push(Token::Keyword(Keyword::Commit));
+            }
             _ => {
                 self.tokens.push(Token::Ident(self.buffer.clone()));
             }
@@ -139,6 +151,9 @@ fn parse_tokens(mut tokens: impl Iterator<Item = Token>) -> Result<UserCommand, 
             Keyword::Get => process_get_keyword(&mut tokens),
             Keyword::Put => process_put_keyword(&mut tokens),
             Keyword::Delete => process_delete_keyword(&mut tokens),
+            Keyword::Rollback => Ok(UserCommand::Rollback),
+            Keyword::Commit => Ok(UserCommand::Commit),
+            Keyword::Begin => Ok(UserCommand::Begin),
             Keyword::Exit => Ok(UserCommand::Exit),
         },
         _ => Err("Expected keyword GET, PUT or DELETE".into()),
