@@ -11,7 +11,6 @@ mod command;
 mod repl;
 mod setup;
 mod execute;
-mod storage;
 mod parse;
 mod stdin;
 mod hash_storage;
