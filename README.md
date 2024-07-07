@@ -1,6 +1,6 @@
 # Toy database
 
-A toy experiment to implement a database with Rust.
+A toy experiment to implement a persistent key value store with Rust.
 
 ## Usage
 
@@ -23,6 +23,7 @@ Run through stdin with:
 ```
 cat commands.txt | cargo run --release -- --stdin
 ```
+
 ## Features
 
 Commands include:
@@ -37,8 +38,7 @@ Commands include:
 
 ## Testing and benching
 
-
-
+Very primitive testing and benching is done in a separate repo [here](https://github.com/brahms116/silly_rusty_kv_test/tree/main)
 
 ## TODOs:
 
@@ -46,10 +46,11 @@ Commands include:
     -   [x] What performance impacts does this have?
             Turns out it's fast because I don't call fsync, but if I do, it slows down significantly
 -   [x] Impelment a server client thingo so I can keep the
-        database running different commands for it
+        database running whilst executing different commands from different connections against it
     -   [x] Make distinct modes in running the db, repl, stdin etc
     -   [x] Implement the tcp endpoint
 -   [x] Implement a in memory WAL for the database
 -   [ ] Make it possible to close the database from the client tcp socket instead of ignoring the EXIT command
 -   [ ] Work on cleanup from signals
--   [ ] Refactor the legacy appendonly thing to contain use the in memory WAL and the hash table as an index
+-   [ ] Reimplmenet the legacy appendonly storage engine and modify it contain use the in memory WAL and the hash table as an index
+-   [ ] Clean up the code
