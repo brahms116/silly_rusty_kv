@@ -1,11 +1,11 @@
 use crate::bytes::{ByteLength, IntoBytes, ParseFromBytes};
 use crate::command::*;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash as _, Hasher};
 use std::io::SeekFrom;
 use std::mem::size_of;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use twox_hash::XxHash64;
 
 fn take_bytes_from_iterator<'a, T: Iterator<Item = &'a u8>, const N: usize>(
     bytes: &mut T,
@@ -43,7 +43,7 @@ const BUCKET_INDEX_TYPE_BYTES: usize = size_of::<BucketIndexType>();
 
 /// Returns a hash from a string key
 fn hash_string_key(key: &str) -> Hash {
-    let mut hasher = DefaultHasher::new();
+    let mut hasher = XxHash64::with_seed(0);
     key.hash(&mut hasher);
     hasher.finish()
 }

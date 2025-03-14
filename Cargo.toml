@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.33.0", features = ["full"] }
 uuid = { version = "1.9.1", features = ["v4"] }
+twox-hash = "2.1.0"
