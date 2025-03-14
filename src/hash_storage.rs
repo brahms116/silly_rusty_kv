@@ -238,9 +238,13 @@ impl HashStorage {
     pub async fn handle_cmd(&mut self, cmd: StorageCommand) -> Result<CommandOutput, String> {
         match cmd {
             StorageCommand::Put(cmd) => {
-                self.put(Record(hash_string_key(&cmd.0), cmd.1.into_bytes()))
-                    .await
-                    .unwrap();
+                self.put(Record(
+                    hash_string_key(&cmd.0),
+                    cmd.0.into_bytes(),
+                    cmd.1.into_bytes(),
+                ))
+                .await
+                .unwrap();
                 Ok(CommandOutput::Put)
             }
             StorageCommand::Delete(cmd) => {
@@ -249,7 +253,7 @@ impl HashStorage {
             }
             StorageCommand::Get(cmd) => {
                 if let Some(value) = self
-                    .get(hash_string_key(&cmd.0))
+                    .get(hash_string_key(&cmd.0), cmd.0.as_bytes())
                     .await
                     .unwrap()
                     .map(|x| String::from_utf8(x).unwrap())
@@ -274,9 +278,7 @@ impl HashStorage {
     }
 
     fn hash_key_to_remainder(&self, key: &str) -> (Hash, usize) {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        let hash = hasher.finish();
+        let hash = hash_string_key(key);
         let remainder = hash % 2_u64.pow(self.global_level.into());
         (hash, remainder.try_into().unwrap())
     }
@@ -307,13 +309,17 @@ impl HashStorage {
 
         loop {
             // Easy cases, they fit
-            if let Some(existing_record) = bucket.records.iter_mut().find(|x| x.0 == record.0) {
+            if let Some(existing_record) = bucket
+                .records
+                .iter_mut()
+                .find(|x| x.0 == record.0 && x.1 == record.1)
+            {
                 // Check the difference between the existing record and the new record to see if
                 // the bucket can accomodate to the difference in size
-                if existing_record.1.len() >= record.1.len()
-                    || record.1.len() - existing_record.1.len() <= bucket.remaining_byte_space
+                if existing_record.2.len() >= record.2.len()
+                    || record.2.len() - existing_record.2.len() <= bucket.remaining_byte_space
                 {
-                    existing_record.1 = record.1;
+                    existing_record.2 = record.2;
                     bucket.update_remaining_byte_count();
                     bucket.save_to_file(&mut self.buckets_file).await;
                     return Ok(());
@@ -407,7 +413,7 @@ impl HashStorage {
         }
     }
 
-    async fn get(&mut self, hash: Hash) -> Result<Option<Vec<u8>>, ()> {
+    async fn get(&mut self, hash: Hash, key: &[u8]) -> Result<Option<Vec<u8>>, ()> {
         let remainder = self.hash_to_remainder(hash);
         let bucket =
             Bucket::read_from_file(&mut self.buckets_file, self.bucket_lookup[remainder]).await;
@@ -415,8 +421,8 @@ impl HashStorage {
         Ok(bucket
             .records
             .into_iter()
-            .find(|x| x.0 == hash)
-            .map(|r| r.1))
+            .find(|x| x.0 == hash && x.1 == key)
+            .map(|r| r.2))
     }
 
     pub async fn delete(&mut self, cmd: DeleteCommand) -> Result<(), ()> {
@@ -425,7 +431,11 @@ impl HashStorage {
         let mut bucket =
             Bucket::read_from_file(&mut self.buckets_file, self.bucket_lookup[remainder]).await;
 
-        bucket.records = bucket.records.into_iter().filter(|x| x.0 != hash).collect();
+        bucket.records = bucket
+            .records
+            .into_iter()
+            .filter(|x| x.0 != hash && x.1 != cmd.0.as_bytes())
+            .collect();
         bucket.update_remaining_byte_count();
         bucket.save_to_file(&mut self.buckets_file).await;
         Ok(())
@@ -549,9 +559,9 @@ mod test_bucket {
             level: 1,
             remaining_byte_space: 0,
             records: vec![
-                Record(0b_1110, vec![25, 236, 36, 46]),
-                Record(0b_0010, vec![26, 236, 36, 46]),
-                Record(0b_0110, vec![27, 236, 36, 46]),
+                Record(0b_1110, vec![1], vec![25, 236, 36, 46]),
+                Record(0b_0010, vec![2], vec![26, 236, 36, 46]),
+                Record(0b_0110, vec![3], vec![27, 236, 36, 46]),
             ],
         };
         bucket.update_remaining_byte_count();
@@ -573,12 +583,13 @@ mod test_bucket {
 /// - A record header of `RECORD_HEADER_BYTES` in length
 ///     - This has a value of 1, indicating that it is not empty space
 /// - The hash containing `HASH_BYTES` in length
-/// - Record value header indicating the length of the value, has a length of
-/// `RECORD_VALUE_HEADER_BYTES`
+/// - Record key value header indicating the length of the key, has a length of `RECORD_KEY_HEADER_BYTES`
+/// - The bytes containing the key with the length indicated by the record's key header
+/// - Record value header indicating the length of the value, has a length of `RECORD_VALUE_HEADER_BYTES`
 /// - The bytes containing the value with the length indicated by the record's value header
 ///
 #[derive(Clone, Debug, PartialEq)]
-struct Record(Hash, Vec<u8>);
+struct Record(Hash, Vec<u8>, Vec<u8>);
 
 /// The type used to indicate the header of a record, see `Record` for the full layout
 type RecordHeader = u8;
@@ -590,30 +601,47 @@ const RECORD_HEADER: RecordHeader = 1;
 /// The length of the record header in bytes
 const RECORD_HEADER_BYTES: usize = size_of::<RecordHeader>();
 
+/// The type used to indicate the len of the key component in a record, see `Record` for the full layout
+type RecordKeyLength = u16;
+
+/// The len in bytes for the key header in a record, see `Record` for the full layout
+const RECORD_KEY_HEADER_BYTES: usize = size_of::<RecordKeyLength>();
+
 /// The type used to indicate the len of the value component in a record, see `Record` for the full layout
 type RecordValueLength = u16;
 
 /// The len in bytes for the value header in a record, see `Record` for the full layout
 const RECORD_VALUE_HEADER_BYTES: usize = size_of::<RecordValueLength>();
 
-/// The maximum length in bytes in which a value in a record can be
-const MAX_HASH_VALUE_BYTES: usize =
-    PAGE_BYTES - BUCKET_HEADER_BYTES - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
+/// The maximum length in bytes in which a key and value pair can be in a record
+const MAX_RECORD_KEY_VALUE_BYTES: usize = PAGE_BYTES
+    - BUCKET_HEADER_BYTES
+    - RECORD_HEADER_BYTES
+    - HASH_BYTES
+    - RECORD_KEY_HEADER_BYTES
+    - RECORD_VALUE_HEADER_BYTES;
 
 impl IntoBytes for Record {
     fn into_bytes(self) -> Vec<u8> {
         let mut result = vec![];
         result.push(RECORD_HEADER);
         result.extend(self.0.to_le_bytes());
-        result.extend((self.1.len() as RecordValueLength).to_le_bytes());
+        result.extend((self.1.len() as RecordKeyLength).to_le_bytes());
         result.extend(self.1);
+        result.extend((self.2.len() as RecordValueLength).to_le_bytes());
+        result.extend(self.2);
         return result;
     }
 }
 
 impl ByteLength for Record {
     fn byte_len(&self) -> usize {
-        RECORD_HEADER_BYTES + HASH_BYTES + RECORD_VALUE_HEADER_BYTES + self.1.len()
+        RECORD_HEADER_BYTES
+            + HASH_BYTES
+            + RECORD_KEY_HEADER_BYTES
+            + self.1.len()
+            + RECORD_VALUE_HEADER_BYTES
+            + self.2.len()
     }
 }
 
@@ -634,13 +662,16 @@ where
         let hash_bytes: [u8; HASH_BYTES] = take_bytes_from_iterator(&mut bytes);
         let hash = Hash::from_le_bytes(hash_bytes.try_into().unwrap());
 
+        let key_header_bytes: [u8; RECORD_KEY_HEADER_BYTES] = take_bytes_from_iterator(&mut bytes);
+        let key_len = RecordValueLength::from_le_bytes(key_header_bytes.try_into().unwrap());
+        let key: Vec<u8> = bytes.by_ref().take(key_len as usize).cloned().collect();
+
         let value_header_bytes: [u8; RECORD_VALUE_HEADER_BYTES] =
             take_bytes_from_iterator(&mut bytes);
-
         let value_len = RecordValueLength::from_le_bytes(value_header_bytes.try_into().unwrap());
-
         let value: Vec<u8> = bytes.by_ref().take(value_len as usize).cloned().collect();
-        return Ok((Record(hash, value), bytes));
+
+        return Ok((Record(hash, key, value), bytes));
     }
 }
 
@@ -650,7 +681,7 @@ mod test_record {
 
     #[test]
     fn into_and_from_bytes() {
-        let r = Record(0b_1110, vec![25, 236, 36, 46]);
+        let r = Record(0b_1110, vec![24, 21, 56, 0], vec![25, 236, 36, 46]);
         let bytes = r.clone().into_bytes();
         let (r_, bs) = Record::from_bytes(bytes.iter(), ()).unwrap();
         assert_eq!(r_, r);
@@ -679,10 +710,15 @@ mod test_hash_storage {
         HashStorage::new(&dir_path, &data_path).await
     }
 
-    fn record_from_size(hash: u64, byte: u8, size: usize) -> Record {
-        let value_len = size - RECORD_HEADER_BYTES - HASH_BYTES - RECORD_VALUE_HEADER_BYTES;
+    fn record_from_size(hash: u64, key: u8, byte: u8, size: usize) -> Record {
+        let value_len = size
+            - RECORD_HEADER_BYTES
+            - HASH_BYTES
+            - RECORD_VALUE_HEADER_BYTES
+            - RECORD_KEY_HEADER_BYTES
+            - 1;
         let value = vec![byte; value_len];
-        Record(hash, value)
+        Record(hash, vec![key], value)
     }
 
     #[tokio::test]
@@ -743,9 +779,9 @@ mod test_hash_storage {
     #[tokio::test]
     async fn local_split() {
         let mut engine = get_engine("hash_storage_local_split").await;
-        let old_record = record_from_size(0b_1010, 1, 4000);
+        let old_record = record_from_size(0b_1010, 1, 1, 4000);
 
-        let new_record = record_from_size(0b_1110, 2, 4000);
+        let new_record = record_from_size(0b_1110, 2, 2, 4000);
 
         let mut buckets = vec![
             Bucket {
@@ -842,9 +878,9 @@ mod test_hash_storage {
     #[tokio::test]
     async fn global_split() {
         let mut engine = get_engine("hash_storage_global_split").await;
-        let old_record = record_from_size(0b_1010, 1, 4000);
+        let old_record = record_from_size(0b_1010, 1, 1, 4000);
 
-        let new_record = record_from_size(0b_1110, 2, 4000);
+        let new_record = record_from_size(0b_1110, 2, 2, 4000);
 
         let mut buckets = vec![
             Bucket {
